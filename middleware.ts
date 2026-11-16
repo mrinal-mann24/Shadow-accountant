@@ -3,7 +3,7 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { publicEnv } from '@/lib/env'
 import { DEV_LOGIN_COOKIE } from '@/lib/auth/cookies'
-import { devLoginEmail, isPublicPath } from '@/lib/auth/roles'
+import { devLoginEmail, isPublicPath, parseDevLoginChoice } from '@/lib/auth/roles'
 
 export async function middleware(request: NextRequest) {
   // Job and webhook routes authenticate themselves (cron secret, HubSpot signature); no session needed.
@@ -35,7 +35,7 @@ export async function middleware(request: NextRequest) {
   if (user || isPublicPath(pathname)) return response
 
   // DEV LOGIN (local development only; devLoginEmail() returns null in production).
-  if (devLoginEmail(process.env) && request.cookies.get(DEV_LOGIN_COOKIE)?.value === '1') return response
+  if (devLoginEmail(process.env) && parseDevLoginChoice(request.cookies.get(DEV_LOGIN_COOKIE)?.value)) return response
 
   if (pathname.startsWith('/api/')) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 })

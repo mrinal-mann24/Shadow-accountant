@@ -3,7 +3,7 @@
 /** Engineer "view as": the va_id being viewed. httpOnly. */
 export const VIEW_AS_COOKIE = 'view_as_va'
 
-/** DEV LOGIN only: "1" while signed in with DEV_LOGIN_EMAIL. Ignored in production. httpOnly. */
+/** DEV LOGIN only: "engineer" | "admin" | "va:<va_id>" (or legacy "1"); see parseDevLoginChoice. Ignored in production. httpOnly. */
 export const DEV_LOGIN_COOKIE = 'dev_login'
 
 export const AUTH_COOKIE_OPTIONS = {

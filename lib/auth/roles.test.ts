@@ -4,6 +4,8 @@ import {
   assertNotViewingAs,
   canSeeAllClients,
   devLoginEmail,
+  devLoginIdentity,
+  parseDevLoginChoice,
   findVaByEmail,
   isPublicPath,
   isTrustedSessionUser,
@@ -171,5 +173,42 @@ describe('isTrustedSessionUser (Microsoft SSO only)', () => {
 
   it('rejects an account with no provider information', () => {
     expect(isTrustedSessionUser({ email_confirmed_at: '2026-11-01T00:00:00Z' })).toBe(false)
+  })
+})
+
+describe('dev login role picker (local only)', () => {
+  const vas: VaRecord[] = [
+    { va_id: '11111111-2222-3333-4444-555555555555', va_name: 'Asha Rao', email: 'asha@example.com' },
+    { va_id: '66666666-7777-8888-9999-000000000000', va_name: 'No Email', email: null },
+  ]
+
+  it('parses the cookie value: legacy, a role, or an accountant; rejects anything else', () => {
+    expect(parseDevLoginChoice('1')).toEqual({ kind: 'legacy' })
+    expect(parseDevLoginChoice('engineer')).toEqual({ kind: 'role', role: 'engineer' })
+    expect(parseDevLoginChoice('admin')).toEqual({ kind: 'role', role: 'admin' })
+    expect(parseDevLoginChoice('va:11111111-2222-3333-4444-555555555555')).toEqual({
+      kind: 'accountant',
+      vaId: '11111111-2222-3333-4444-555555555555',
+    })
+    for (const bad of [undefined, '', 'senior_accountant', 'va:not-a-uuid', 'superuser']) {
+      expect(parseDevLoginChoice(bad)).toBeNull()
+    }
+  })
+
+  it('an accountant signs in with their own vas email, so they get exactly their scope', () => {
+    const id = devLoginIdentity({ kind: 'accountant', vaId: vas[0].va_id }, 'dev@example.com', vas)
+    expect(id).toEqual({ id: `dev-login:${vas[0].va_id}`, email: 'asha@example.com', name: 'Asha Rao', appRole: 'senior_accountant' })
+    expect(resolveAppUser(id!, findVaByEmail(vas, id!.email))).toMatchObject({ role: 'senior_accountant', vaId: vas[0].va_id })
+  })
+
+  it('admin and engineer use the dev email with that role; unknown or email-less accountants get nothing', () => {
+    expect(devLoginIdentity({ kind: 'role', role: 'admin' }, 'dev@example.com', vas)).toMatchObject({ email: 'dev@example.com', appRole: 'admin' })
+    expect(devLoginIdentity({ kind: 'role', role: 'engineer' }, 'dev@example.com', vas)).toMatchObject({ appRole: 'engineer' })
+    expect(devLoginIdentity({ kind: 'accountant', vaId: vas[1].va_id }, 'dev@example.com', vas)).toBeNull()
+    expect(devLoginIdentity({ kind: 'accountant', vaId: 'ffffffff-ffff-ffff-ffff-ffffffffffff' }, 'dev@example.com', vas)).toBeNull()
+  })
+
+  it('keeps the old single-user cookie working with DEV_LOGIN_ROLE', () => {
+    expect(devLoginIdentity({ kind: 'legacy' }, 'dev@example.com', vas, 'engineer')).toMatchObject({ email: 'dev@example.com', appRole: 'engineer' })
   })
 })

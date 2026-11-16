@@ -130,3 +130,40 @@ export function devLoginEmail(env: { NODE_ENV?: string; DEV_LOGIN_EMAIL?: string
   const email = env.DEV_LOGIN_EMAIL?.trim()
   return email ? email : null
 }
+
+/**
+ * DEV LOGIN choice kept in the dev_login cookie (local development only):
+ *  "1"          legacy: DEV_LOGIN_EMAIL with DEV_LOGIN_ROLE
+ *  "engineer" / "admin"  that role, as DEV_LOGIN_EMAIL
+ *  "va:<va_id>" that accountant, with their real vas email, so the senior accountant scope is exact
+ */
+export type DevLoginChoice =
+  | { kind: 'legacy' }
+  | { kind: 'role'; role: 'admin' | 'engineer' }
+  | { kind: 'accountant'; vaId: string }
+
+export function parseDevLoginChoice(value: string | null | undefined): DevLoginChoice | null {
+  const v = value?.trim()
+  if (!v) return null
+  if (v === '1') return { kind: 'legacy' }
+  if (v === 'admin' || v === 'engineer') return { kind: 'role', role: v }
+  const m = /^va:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(v)
+  return m ? { kind: 'accountant', vaId: m[1].toLowerCase() } : null
+}
+
+/** The DEV LOGIN identity for a choice; null when the accountant is unknown or has no email. */
+export function devLoginIdentity(
+  choice: DevLoginChoice,
+  devEmail: string,
+  vas: readonly VaRecord[],
+  envRole?: string,
+): AuthIdentity | null {
+  if (choice.kind === 'legacy') return { id: `dev-login:${devEmail}`, email: devEmail, name: null, appRole: envRole }
+  if (choice.kind === 'role') {
+    const name = choice.role === 'admin' ? 'Dev Admin' : 'Dev Engineer'
+    return { id: `dev-login:${choice.role}`, email: devEmail, name, appRole: choice.role }
+  }
+  const va = vas.find((v) => v.va_id.toLowerCase() === choice.vaId)
+  if (!va?.email) return null
+  return { id: `dev-login:${va.va_id}`, email: va.email, name: va.va_name, appRole: 'senior_accountant' }
+}

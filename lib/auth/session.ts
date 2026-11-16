@@ -8,6 +8,8 @@ import { DEV_LOGIN_COOKIE, VIEW_AS_COOKIE } from './cookies'
 import {
   applyViewAs,
   devLoginEmail,
+  devLoginIdentity,
+  parseDevLoginChoice,
   findVaByEmail,
   isTrustedSessionUser,
   resolveAppUser,
@@ -48,10 +50,11 @@ async function getIdentity(): Promise<AuthIdentity | 'no_email' | { untrusted: s
 
   // ---- DEV LOGIN (local development only; never in production) --------------------------------
   // Active only when NODE_ENV !== 'production' AND DEV_LOGIN_EMAIL is set AND the dev_login cookie
-  // was set from the login page. Role comes from DEV_LOGIN_ROLE, else the usual vas email rule.
+  // was set from the login page: Engineer, Admin, or a specific accountant (see parseDevLoginChoice).
   const devEmail = devLoginEmail(process.env)
-  if (devEmail && (await cookies()).get(DEV_LOGIN_COOKIE)?.value === '1') {
-    return { id: `dev-login:${devEmail}`, email: devEmail, name: null, appRole: process.env.DEV_LOGIN_ROLE }
+  const choice = devEmail ? parseDevLoginChoice((await cookies()).get(DEV_LOGIN_COOKIE)?.value) : null
+  if (devEmail && choice) {
+    return devLoginIdentity(choice, devEmail, await loadVas(), process.env.DEV_LOGIN_ROLE)
   }
   // ---- end DEV LOGIN ---------------------------------------------------------------------------
   return null

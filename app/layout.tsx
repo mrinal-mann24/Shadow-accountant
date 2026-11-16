@@ -9,7 +9,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en-IN">
+    // suppressHydrationWarning: browser extensions (e.g. Storylane) add classes to <html> before React
+    // loads. This only ignores attribute differences on <html> itself, not on anything inside it.
+    <html lang="en-IN" suppressHydrationWarning>
       <body>
         <TooltipProvider>{children}</TooltipProvider>
       </body>

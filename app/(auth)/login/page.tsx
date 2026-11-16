@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { getAuthState } from '@/lib/auth/session'
+import { getAuthState, loadVas } from '@/lib/auth/session'
 import { devLoginEmail, safeNextPath } from '@/lib/auth/roles'
 import { devLogin, signInWithMicrosoft } from './actions'
 
@@ -25,6 +25,16 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   if (state.status === 'no_access') redirect('/no-access')
 
   const devEmail = devLoginEmail(process.env)
+  // DEV LOGIN choices: Engineer, Admin, and every accountant with an email (their real vas scope).
+  const devChoices = devEmail
+    ? [
+        { as: 'engineer', label: 'Engineer' },
+        { as: 'admin', label: 'Admin' },
+        ...(await loadVas())
+          .filter((v) => v.email)
+          .map((v) => ({ as: `va:${v.va_id}`, label: `Senior Accountant: ${v.va_name}` })),
+      ]
+    : []
 
   return (
     <main className="flex min-h-svh items-center justify-center bg-background p-6">
@@ -48,15 +58,18 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
 
           {/* DEV LOGIN: rendered only when NODE_ENV !== 'production' and DEV_LOGIN_EMAIL is set. */}
           {devEmail && (
-            <form action={devLogin} className="rounded-md border border-dashed border-warning p-3">
-              <input type="hidden" name="next" value={next} />
-              <p className="mb-2 text-xs text-muted-foreground">
-                Development only. Not available in production.
-              </p>
-              <Button type="submit" variant="outline" size="sm" className="w-full">
-                Dev login as {devEmail}
-              </Button>
-            </form>
+            <div className="space-y-2 rounded-md border border-dashed border-warning p-3">
+              <p className="text-xs text-muted-foreground">Development only. Not available in production. Sign in as:</p>
+              {devChoices.map((c) => (
+                <form key={c.as} action={devLogin}>
+                  <input type="hidden" name="next" value={next} />
+                  <input type="hidden" name="as" value={c.as} />
+                  <Button type="submit" variant="outline" size="sm" className="w-full justify-start">
+                    {c.label}
+                  </Button>
+                </form>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>
