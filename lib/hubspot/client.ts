@@ -34,6 +34,9 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out
 }
 
+/** One CRM search filter. HAS_PROPERTY / NOT_HAS_PROPERTY take no value. */
+export type SearchFilter = { propertyName: string; operator: string; value?: string; values?: string[] }
+
 /** One entry of a HubSpot batch response's `errors` array (207 Multi-Status). */
 export type BatchError = { message?: string; category?: string; context?: Record<string, unknown> }
 
@@ -81,8 +84,8 @@ export function createHubspotClient(opts: HubspotClientOptions) {
     }
   }
 
-  /** Deals with hs_lastmodifieddate >= since (all deals when since is null), oldest first. */
-  async function searchDealsModifiedSince(since: Date | null, properties: string[]): Promise<HubspotDeal[]> {
+  /** Every deal matching all `filters` (one AND group; none = all deals), oldest modified first, paged. */
+  async function searchDeals(filters: SearchFilter[], properties: string[]): Promise<HubspotDeal[]> {
     const deals: HubspotDeal[] = []
     let after: string | undefined
     do {
@@ -90,9 +93,7 @@ export function createHubspotClient(opts: HubspotClientOptions) {
         'POST',
         '/crm/v3/objects/deals/search',
         {
-          filterGroups: since
-            ? [{ filters: [{ propertyName: 'hs_lastmodifieddate', operator: 'GTE', value: String(since.getTime()) }] }]
-            : [],
+          filterGroups: filters.length ? [{ filters }] : [],
           sorts: [{ propertyName: 'hs_lastmodifieddate', direction: 'ASCENDING' }],
           properties,
           limit: 100,
@@ -103,6 +104,39 @@ export function createHubspotClient(opts: HubspotClientOptions) {
       after = page.paging?.next?.after
     } while (after)
     return deals
+  }
+
+  /** Deals with hs_lastmodifieddate >= since (all deals when since is null), oldest first. */
+  async function searchDealsModifiedSince(since: Date | null, properties: string[]): Promise<HubspotDeal[]> {
+    return searchDeals(
+      since ? [{ propertyName: 'hs_lastmodifieddate', operator: 'GTE', value: String(since.getTime()) }] : [],
+      properties,
+    )
+  }
+
+  /** Stage id -> label for one deal pipeline. */
+  async function getPipelineStageLabels(pipelineId: string): Promise<Map<string, string>> {
+    const res = await request<{ stages?: { id: string; label: string }[] }>(
+      'GET',
+      `/crm/v3/pipelines/deals/${encodeURIComponent(pipelineId)}`,
+    )
+    return new Map((res.stages ?? []).map((s) => [String(s.id), s.label]))
+  }
+
+  /** Owner id -> lowercase email, for every active owner. */
+  async function listOwnerEmails(): Promise<Map<string, string>> {
+    const out = new Map<string, string>()
+    let after: string | undefined
+    do {
+      const qs = new URLSearchParams({ limit: '500', ...(after ? { after } : {}) })
+      const page = await request<{ results: { id: string; email?: string | null }[]; paging?: { next?: { after?: string } } }>(
+        'GET',
+        `/crm/v3/owners?${qs.toString()}`,
+      )
+      for (const o of page.results) if (o.email) out.set(String(o.id), o.email.trim().toLowerCase())
+      after = page.paging?.next?.after
+    } while (after)
+    return out
   }
 
   /** Batch read by deal id. Deals that do not exist are simply missing from the result. */
@@ -140,7 +174,15 @@ export function createHubspotClient(opts: HubspotClientOptions) {
     return { updated, errors }
   }
 
-  return { request, searchDealsModifiedSince, batchReadDeals, batchUpdateDeals }
+  return {
+    request,
+    searchDeals,
+    searchDealsModifiedSince,
+    getPipelineStageLabels,
+    listOwnerEmails,
+    batchReadDeals,
+    batchUpdateDeals,
+  }
 }
 
 export type HubspotClient = ReturnType<typeof createHubspotClient>

@@ -6,119 +6,138 @@ import { chunk, fetchAll } from '@/lib/data/paginate'
 import { BUCKET_STORAGE_APPROVED, getClientBucket } from '@/lib/buckets'
 import { createHubspotClient, type HubspotClient, type HubspotDeal } from './client'
 import {
-  HUBSPOT_PULL_PROPERTIES,
   SHADOW_OWNED_PROPERTIES,
+  STATUS_ACTIVE,
   buildShadowDealProperties,
   diffDealProperties,
   gateClientCreates,
+  hubspotPullProperties,
   MAX_CREATES_PER_RUN,
-  parseWonStageIds,
+  paidDateProperty,
   planDealPull,
+  vaConfigFromEnv,
+  type KnownClient,
+  type LinkedClient,
+  type VaConfig,
 } from './mapping'
+import { isActiveClient } from '@/lib/data/client-status'
 
+/** Time of the last scheduled write run with no failed writes. Shown on Admin and Engineer; not a pull cursor. */
 export const CURSOR_KEY = 'hubspot_last_sync'
 const JOB = 'hubspot-sync'
 
 type ClientRow = {
   client_id: string
+  client_name: string
   hubspot_deal_id: string | null
   deal_stage: string | null
   amount_paid: number | null
+  status: string | null
   va_id: string | null
-}
-
-/**
- * Two-way HubSpot Deals sync.
- *  1. Pull: deals modified since settings 'hubspot_last_sync' (or just `dealIds` from a webhook) update
- *     clients.deal_stage / amount_paid; a won deal with no client creates one, except on the first sync (no
- *     cursor yet: updates only, the run seeds the cursor) and never more than MAX_CREATES_PER_RUN per run.
- *  2. Push: Shadow-owned va_* properties, only where HubSpot's current value differs.
- * Dry-run unless write is true: reads both sides, reports the plan, writes nothing (cursor included).
- */
-export async function runHubspotSync(o: { write: boolean; dealIds?: string[]; now?: Date }): Promise<JobResult> {
-  const now = o.now ?? new Date()
-  const result: JobResult = { job: JOB, dryRun: !o.write, processed: 0, written: 0, errors: [] }
-
-  const token = serverEnv().HUBSPOT_ACCESS_TOKEN
-  if (!token) {
-    result.errors.push('HUBSPOT_ACCESS_TOKEN is not set')
-    result.fatal = true
-    return result
-  }
-  const hubspot = createHubspotClient({ token })
-  const db = createAdminSupabase()
-  const wonStageIds = parseWonStageIds(process.env.HUBSPOT_WON_STAGE_IDS)
-  const warnings: string[] = []
-  if (wonStageIds.size === 0) warnings.push('HUBSPOT_WON_STAGE_IDS is not set: amounts and new clients are skipped')
-
-  const { data: clientData, error: clientErr } = await db
-    .from('clients')
-    .select('client_id, hubspot_deal_id, deal_stage, amount_paid, va_id')
-    .not('hubspot_deal_id', 'is', null)
-  if (clientErr) {
-    result.errors.push(`load clients: ${clientErr.message}`)
-    result.fatal = true
-    return result
-  }
-  const clients = (clientData ?? []) as ClientRow[]
-  const clientsByDealId = new Map(clients.map((c) => [c.hubspot_deal_id as string, c]))
-
-  const pull = await pullDeals({ o, now, hubspot, db, wonStageIds, clientsByDealId, result, warnings })
-  const pushTargets = o.dealIds ? clients.filter((c) => o.dealIds!.includes(c.hubspot_deal_id as string)) : clients
-  const push = await pushDeals({ write: o.write, hubspot, db, clients: pushTargets, result })
-
-  result.details = { pull, push, bucketPushed: BUCKET_STORAGE_APPROVED, warnings }
-  return result
+  parent_client_id: string | null
 }
 
 type Db = ReturnType<typeof createAdminSupabase>
 
-async function pullDeals(a: {
-  o: { write: boolean; dealIds?: string[] }
-  now: Date
-  hubspot: HubspotClient
-  db: Db
-  wonStageIds: Set<string>
-  clientsByDealId: Map<string, ClientRow>
-  result: JobResult
-  warnings: string[]
-}) {
-  const { o, hubspot, db, result } = a
-  const properties = [...HUBSPOT_PULL_PROPERTIES]
-  let since: Date | null = null
-  let deals: HubspotDeal[]
-  try {
-    // The cursor is read for the webhook too: with no cursor yet (first sync not run), nothing is created.
-    const { data: cursor, error } = await db.from('settings').select('value').eq('key', CURSOR_KEY).maybeSingle()
-    if (error) throw new Error(`read cursor: ${error.message}`)
-    const parsed = cursor?.value ? new Date(cursor.value) : null
-    since = parsed && !Number.isNaN(parsed.getTime()) ? parsed : null
-    if (o.dealIds) {
-      deals = o.dealIds.length ? await hubspot.batchReadDeals(o.dealIds, properties) : []
-    } else {
-      deals = await hubspot.searchDealsModifiedSince(since, properties)
-    }
-  } catch (e) {
-    result.errors.push(`pull: ${(e as Error).message}`)
+/**
+ * HubSpot Deals sync (spec: specs/hubspot-sync-v2.md).
+ *  1. Pull: every paid deal in the Virtual Accounting pipeline (or just `dealIds` from the webhook). Each run
+ *     reconciles all of them, so a missed webhook heals on the next run. Linked clients get stage label,
+ *     amount_paid and Active / Inactive; an active deal with no client creates one (at most MAX_CREATES_PER_RUN,
+ *     and never when a client of a similar name exists: that goes to needsReview).
+ *  2. Push: Shadow-owned va_* properties, only when HUBSPOT_PUSH_ENABLED=true (off: the properties do not exist yet).
+ * Dry-run unless write is true: reads both sides, reports the plan, writes nothing.
+ */
+export async function runHubspotSync(o: { write: boolean; dealIds?: string[]; now?: Date }): Promise<JobResult> {
+  const now = o.now ?? new Date()
+  const result: JobResult = { job: JOB, dryRun: !o.write, processed: 0, written: 0, errors: [] }
+  const warnings: string[] = []
+  const fail = (msg: string) => {
+    result.errors.push(msg)
     result.fatal = true
-    return { since: since?.toISOString() ?? null, deals: 0, cursorWritten: false }
+    return result
   }
 
-  result.processed += deals.length
-  const plan = planDealPull(deals, a.clientsByDealId, a.wonStageIds)
-  const gate = gateClientCreates(plan.creates, { firstRun: since === null })
-  let failed = 0
-  if (gate.reason === 'first_run') {
-    a.warnings.push(
-      `First sync (no cursor yet): ${gate.held} won deals with no client were not created. A write run seeds the ` +
-        'cursor; later runs create clients only for deals modified after it. Add any real ones by hand.',
+  const env = serverEnv()
+  if (!env.HUBSPOT_ACCESS_TOKEN) return fail('HUBSPOT_ACCESS_TOKEN is not set')
+  const hubspot = createHubspotClient({ token: env.HUBSPOT_ACCESS_TOKEN })
+  const db = createAdminSupabase()
+
+  // Stage labels are required: clients store the label, never the id.
+  let cfg: VaConfig
+  try {
+    const base = vaConfigFromEnv(process.env)
+    cfg = { ...base, stageLabels: await hubspot.getPipelineStageLabels(base.pipelineId) }
+    if (cfg.stageLabels.size === 0) return fail(`pipeline ${base.pipelineId} has no stages (wrong HUBSPOT_VA_PIPELINE_ID?)`)
+  } catch (e) {
+    return fail(`load pipeline stages: ${(e as Error).message}`)
+  }
+
+  let clients: ClientRow[]
+  try {
+    clients = await fetchAll('clients', (from, to) =>
+      db
+        .from('clients')
+        .select('client_id, client_name, hubspot_deal_id, deal_stage, amount_paid, status, va_id, parent_client_id')
+        .order('client_id')
+        .range(from, to),
     )
-  } else if (gate.reason === 'over_cap') {
-    // Counts as a failed write, so the cursor does not move and the error repeats until someone checks.
+  } catch (e) {
+    return fail(`load clients: ${(e as Error).message}`)
+  }
+  const linked = new Map<string, LinkedClient>()
+  for (const c of clients) if (c.hubspot_deal_id) linked.set(c.hubspot_deal_id, c)
+  const known: KnownClient[] = clients.map((c) => ({ client_id: c.client_id, client_name: c.client_name }))
+
+  const vaIdByOwnerId = await loadVaIdByOwnerId(hubspot, db, warnings)
+
+  let deals: HubspotDeal[]
+  const properties = hubspotPullProperties(cfg)
+  try {
+    deals = o.dealIds
+      ? o.dealIds.length
+        ? await hubspot.batchReadDeals(o.dealIds, properties)
+        : []
+      : await hubspot.searchDeals(
+          [
+            { propertyName: 'pipeline', operator: 'EQ', value: cfg.pipelineId },
+            { propertyName: paidDateProperty(cfg), operator: 'HAS_PROPERTY' },
+          ],
+          properties,
+        )
+  } catch (e) {
+    return fail(`pull: ${(e as Error).message}`)
+  }
+  result.processed += deals.length
+
+  const plan = planDealPull(deals, linked, known, cfg, { vaIdByOwnerId, timezone: env.APP_TIMEZONE })
+
+  // Active clients whose deal did not come back (deleted, moved pipeline, or never paid): reported, never changed.
+  const pulledIds = new Set(deals.map((d) => d.id))
+  const expectedIds = o.dealIds ?? [...linked.keys()]
+  const missingDeals = clients
+    .filter((c) => c.hubspot_deal_id && expectedIds.includes(c.hubspot_deal_id) && !pulledIds.has(c.hubspot_deal_id))
+    .filter((c) => isActiveClient(c.status))
+    .map((c) => ({ clientId: c.client_id, clientName: c.client_name, dealId: c.hubspot_deal_id as string }))
+  if (missingDeals.length > 0) {
+    warnings.push(
+      `${missingDeals.length} active client(s) link to a deal that is not a paid VA deal any more (deleted, moved ` +
+        'pipeline, or never paid). They were left as they are; check them by hand.',
+    )
+  }
+  const gate = gateClientCreates(plan.creates)
+  let failed = 0
+  if (gate.held > 0) {
     failed++
     result.errors.push(
-      `${gate.held} won deals with no client is more than the ${MAX_CREATES_PER_RUN} allowed per run, so none were ` +
-        'created. Check HUBSPOT_WON_STAGE_IDS (a shared stage such as closedwon matches non-VA deals).',
+      `${gate.held} active VA deals with no client is more than the ${MAX_CREATES_PER_RUN} allowed per run, so none ` +
+        'were created. Check the HUBSPOT_VA_* settings, or create these clients by hand.',
+    )
+  }
+  if (plan.needsReview.length > 0) {
+    warnings.push(
+      `${plan.needsReview.length} active deal(s) have no linked client but a client with a similar name exists. ` +
+        'Set hubspot_deal_id on the right client by hand; nothing was created for them.',
     )
   }
 
@@ -140,29 +159,71 @@ async function pullDeals(a: {
     }
   }
 
-  // Cursor moves only in write mode, only for the scheduled pull, and only when every write succeeded.
-  let cursorWritten = false
-  if (o.write && !o.dealIds && failed === 0) {
+  // Push only for clients that stay linked and active after this run's pull.
+  const statusAfter = new Map(plan.updates.map((u) => [u.clientId, u.patch.status]))
+  const pushTargets = clients.filter(
+    (c) =>
+      c.hubspot_deal_id &&
+      (!o.dealIds || o.dealIds.includes(c.hubspot_deal_id)) &&
+      (statusAfter.get(c.client_id) ?? c.status) === STATUS_ACTIVE,
+  )
+  const push =
+    process.env.HUBSPOT_PUSH_ENABLED?.trim().toLowerCase() === 'true'
+      ? await pushDeals({ write: o.write, hubspot, db, clients: pushTargets, result })
+      : { skipped: 'HUBSPOT_PUSH_ENABLED is not true (the va_* deal properties do not exist in HubSpot yet)' }
+
+  // Recorded last, and only for a scheduled write run with no errors at all (pull or push).
+  let lastSyncWritten = false
+  if (o.write && !o.dealIds && failed === 0 && result.errors.length === 0) {
     const { error } = await db
       .from('settings')
-      .upsert({ key: CURSOR_KEY, value: a.now.toISOString(), note: 'HubSpot deal sync cursor (hubspot-sync job)' })
-    if (error) result.errors.push(`write cursor: ${error.message}`)
-    else cursorWritten = true
+      .upsert({ key: CURSOR_KEY, value: now.toISOString(), note: 'Last successful HubSpot sync (hubspot-sync job)' })
+    if (error) result.errors.push(`write last sync time: ${error.message}`)
+    else lastSyncWritten = true
   }
 
-  return {
-    since: since?.toISOString() ?? null,
-    deals: deals.length,
-    updates: plan.updates.slice(0, 50),
-    creates: plan.creates.slice(0, 50),
-    updateCount: plan.updates.length,
-    createCount: plan.creates.length,
-    createsHeld: gate.held,
-    createsHeldReason: gate.reason,
-    unchanged: plan.unchanged,
-    ignored: plan.ignored,
-    cursorWritten,
+  result.details = {
+    pull: {
+      pipelineId: cfg.pipelineId,
+      deals: deals.length,
+      counts: plan.counts,
+      updateCount: plan.updates.length,
+      updates: plan.updates.slice(0, 100),
+      createCount: plan.creates.length,
+      creates: plan.creates.slice(0, 50),
+      createsHeld: gate.held,
+      needsReview: plan.needsReview,
+      missingDeals,
+      unchanged: plan.unchanged,
+      lastSyncWritten,
+    },
+    push,
+    bucketPushed: BUCKET_STORAGE_APPROVED,
+    warnings,
   }
+  return result
+}
+
+/**
+ * HubSpot owner id -> accountant va_id, matched on email (vas.email). Only used to pre-fill the accountant of a
+ * NEW client from the deal's AM Deal Owner. Failure is a warning: new clients are then left unassigned.
+ */
+async function loadVaIdByOwnerId(hubspot: HubspotClient, db: Db, warnings: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  try {
+    const [owners, vasRes] = await Promise.all([hubspot.listOwnerEmails(), db.from('vas').select('va_id, email')])
+    if (vasRes.error) throw new Error(vasRes.error.message)
+    const vaByEmail = new Map(
+      (vasRes.data ?? []).filter((v) => v.email).map((v) => [String(v.email).trim().toLowerCase(), v.va_id]),
+    )
+    for (const [ownerId, email] of owners) {
+      const vaId = vaByEmail.get(email)
+      if (vaId) out.set(ownerId, vaId)
+    }
+  } catch (e) {
+    warnings.push(`AM Deal Owner lookup failed, new clients stay unassigned: ${(e as Error).message}`)
+  }
+  return out
 }
 
 async function pushDeals(a: { write: boolean; hubspot: HubspotClient; db: Db; clients: ClientRow[]; result: JobResult }) {
@@ -187,17 +248,16 @@ async function pushDeals(a: { write: boolean; hubspot: HubspotClient; db: Db; cl
     db.from('vas').select('va_id, va_name'),
     db.from('client_scores').select('client_id, service_score').in('client_id', clientIds),
   ])
+  // Push failures are partial errors, not fatal: the pull may already have written.
   try {
     openRows = await loadOpen()
   } catch (e) {
     result.errors.push(`push: load ${(e as Error).message}`)
-    result.fatal = true
     return { deals: 0, changes: [], changeCount: 0, missingInHubspot: [] as string[] }
   }
   for (const [name, r] of [['vas', vasRes], ['client_scores', scoresRes]] as const) {
     if (r.error) {
       result.errors.push(`push: load ${name}: ${r.error.message}`)
-      result.fatal = true
       return { deals: 0, changes: [], changeCount: 0, missingInHubspot: [] as string[] }
     }
   }

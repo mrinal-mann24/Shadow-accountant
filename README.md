@@ -49,7 +49,9 @@ Names only live in `.env.example`; never commit values. Set the same names in Ve
 | `JOBS_WRITE_ONLY` | every job and the HubSpot webhook | Comma list of the jobs allowed to write: `health-score`, `council`, `hubspot-sync` (also the webhook), `embed`. Blank means no job writes (fails closed), so each job has to be named |
 | `HUBSPOT_ACCESS_TOKEN` | HubSpot sync | Private app token |
 | `HUBSPOT_WEBHOOK_SECRET` | HubSpot webhook | The HubSpot app's client secret (signature v3) |
-| `HUBSPOT_WON_STAGE_IDS` | HubSpot sync | Comma list of closed-won deal stage ids. Without it, amounts and new clients are skipped (a warning shows in the job details) |
+| `HUBSPOT_VA_PIPELINE_ID`, `HUBSPOT_VA_PAID_STAGE_ID`, `HUBSPOT_VA_ACTIVE_STAGE_IDS` | HubSpot sync | The VA client rule (`specs/hubspot-sync-v2.md`). Blank uses the live portal's ids: Virtual Accounting pipeline, Payment Done, and Payment Done / Ready for Renewal / Renewal Done |
+| `HUBSPOT_IGNORE_DEAL_IDS` | HubSpot sync | Deals never treated as clients (test deals) |
+| `HUBSPOT_PUSH_ENABLED` | HubSpot sync | `true` pushes the `va_*` deal properties. Keep `false` until those properties exist in HubSpot |
 | `DEV_LOGIN_EMAIL`, `DEV_LOGIN_ROLE` | local only | Leave blank in Vercel |
 | `APP_TIMEZONE` | scoring, chat, business hours | Default `Asia/Kolkata` |
 
@@ -101,7 +103,7 @@ shows exactly what a write run would change.
 |---|---|---|---|
 | Health score | `/api/jobs/health-score[?clientIds=a,b]` | `30 1 * * *` (7:00 am IST) | `client_scores`, `client_score_history` |
 | Ticket council | `/api/jobs/council[?limit=25&clientIds=a,b]` | `*/15 * * * *` | `council_verdicts`, `conversations`, `client_messages.conversation_id` / `processed_at`, `message_processing_log` |
-| HubSpot sync | `/api/jobs/hubspot-sync` | `*/30 * * * *` | `clients.deal_stage`, `clients.amount_paid`, new clients for won deals, settings `hubspot_last_sync`, HubSpot `va_*` deal properties |
+| HubSpot sync | `/api/jobs/hubspot-sync` | `*/30 * * * *` | `clients.deal_stage` (label), `clients.amount_paid`, `clients.status` (Active / Inactive), new clients for active VA deals, settings `hubspot_last_sync`; HubSpot `va_*` deal properties only when `HUBSPOT_PUSH_ENABLED=true` |
 | Embeddings | `/api/jobs/embed[?limit=1..100]` | `0 * * * *` | `client_messages.embedding` |
 
 The HubSpot webhook (`POST /api/webhooks/hubspot`) checks the v3 signature and runs the sync for only the deals
@@ -146,7 +148,7 @@ blank `JOBS_WRITE_ONLY` means no job writes.
 |---|---|
 | health-score | Read-only check that `client_score_history` has a unique constraint on `(client_id, score_date)`. Dry run on a few clients, compare with an accountant's ranking, and get the formula signed off (ROADMAP stage 5) |
 | council | Confirm the old council is switched off, confirm `settings.sla_minutes`, run `council-eval.ts --offline` and `--limit 50`, and agree the agreement bar (ROADMAP stage 6) |
-| hubspot-sync | Set `HUBSPOT_WON_STAGE_IDS`. Private app scopes `crm.objects.deals.read` and `crm.objects.deals.write`. Create the Deal properties `va_bucket` (text), `va_accountant` (text), `va_health_score` (number), `va_open_tickets` (number), `va_open_escalations` (number). Webhook subscriptions `deal.creation` and `deal.propertyChange` for `dealstage` and `amount` only, to `https://<host>/api/webhooks/hubspot`. Review a dry run's `details.pull.updates`, `details.pull.creates` and `details.push.changes`: existing `clients.deal_stage` values may be labels that the first write run turns into stage ids. The first write run (no `hubspot_last_sync` cursor) only updates clients and seeds the cursor; it never creates clients. Later runs create at most 10 clients per run; more than that creates none and reports an error |
+| hubspot-sync | Private app scopes `crm.objects.deals.read`, `crm.schemas.deals.read` and `crm.objects.owners.read` (add `crm.objects.deals.write` only if push is approved later). Webhook subscriptions `deal.creation` and `deal.propertyChange` for `dealstage` and `amount_paid`, to `https://<host>/api/webhooks/hubspot`. Every run reconciles all paid deals in the VA pipeline (about 65), so a missed webhook heals on the next run. Review a dry run's `details.pull`: `counts`, `updates` (stage label, `amount_paid`, Active / Inactive), `creates` and `needsReview` (an active deal whose client exists under a similar name without `hubspot_deal_id`: link it by hand). At most 10 clients are created per run; more creates none and reports an error. Push stays off (`HUBSPOT_PUSH_ENABLED=false`) |
 | embed | Explicit approval: it writes `client_messages.embedding`, and `CLAUDE.md` says this repo only writes the council's columns there. Check that `OPENROUTER_EMBED_MODEL` returns 1536 dimensions |
 
 Data that a human needs to add (with approval): the settings row `team_whatsapp_numbers` (comma list of about 22

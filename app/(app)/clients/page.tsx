@@ -12,22 +12,56 @@ import { listClients } from '@/lib/data'
 export const metadata: Metadata = { title: 'Clients' }
 export const dynamic = 'force-dynamic'
 
-export default async function ClientsPage({ searchParams }: { searchParams: Promise<{ q?: string | string[] }> }) {
+export default async function ClientsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string | string[]; status?: string | string[] }>
+}) {
   const user = await requireUser()
-  const raw = (await searchParams).q
-  const q = (Array.isArray(raw) ? raw[0] : raw)?.trim().slice(0, 100) ?? ''
-  const clients = await listClients(user, q ? { search: q } : {})
+  const params = await searchParams
+  const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
+  const q = first(params.q)?.trim().slice(0, 100) ?? ''
+  const inactive = first(params.status) === 'inactive'
+  const clients = await listClients(user, { ...(q ? { search: q } : {}), status: inactive ? 'inactive' : 'active' })
   const now = new Date()
   const showAccountant = canSeeAllClients(user)
+  const tabHref = (status: 'active' | 'inactive') => {
+    const sp = new URLSearchParams()
+    if (q) sp.set('q', q)
+    if (status === 'inactive') sp.set('status', 'inactive')
+    const s = sp.toString()
+    return s ? `/clients?${s}` : '/clients'
+  }
 
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Clients"
-        description={`${clients.length} ${clients.length === 1 ? 'client' : 'clients'}${q ? ` matching "${q}"` : ''}`}
+        description={`${clients.length} ${inactive ? 'inactive ' : ''}${clients.length === 1 ? 'client' : 'clients'}${q ? ` matching "${q}"` : ''}`}
       />
 
+      <nav aria-label="Client status" className="mb-4 flex gap-2 text-sm">
+        {(['active', 'inactive'] as const).map((s) => {
+          const current = (s === 'inactive') === inactive
+          return (
+            <Link
+              key={s}
+              href={tabHref(s)}
+              aria-current={current ? 'page' : undefined}
+              className={
+                current
+                  ? 'rounded-md border border-foreground px-3 py-1 font-medium'
+                  : 'rounded-md border px-3 py-1 text-muted-foreground hover:bg-secondary'
+              }
+            >
+              {s === 'active' ? 'Active' : 'Inactive (churned or parked)'}
+            </Link>
+          )
+        })}
+      </nav>
+
       <form role="search" className="mb-4 flex max-w-xl gap-2" action="/clients">
+        {inactive && <input type="hidden" name="status" value="inactive" />}
         <label htmlFor="client-search" className="sr-only">
           Search clients
         </label>
@@ -44,7 +78,13 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
       </form>
 
       {clients.length === 0 ? (
-        <EmptyState>{q ? 'No clients match your search.' : 'No clients are assigned to you yet. Ask an Admin to assign clients.'}</EmptyState>
+        <EmptyState>
+          {q
+            ? 'No clients match your search.'
+            : inactive
+              ? 'No inactive clients.'
+              : 'No clients are assigned to you yet. Ask an Admin to assign clients.'}
+        </EmptyState>
       ) : (
         <div className="overflow-hidden rounded-lg border">
           <div className="hidden grid-cols-[minmax(0,3fr)_7rem_7rem_minmax(0,2fr)] gap-4 border-b bg-secondary px-4 py-2 text-xs font-medium text-muted-foreground md:grid">

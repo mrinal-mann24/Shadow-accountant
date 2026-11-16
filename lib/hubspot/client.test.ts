@@ -24,6 +24,45 @@ describe('retryDelayMs', () => {
   })
 })
 
+describe('VA sync reads', () => {
+  it('searchDeals sends one AND group, pages, and returns every deal', async () => {
+    const { fn, calls } = fakeFetch([
+      json({ results: [{ id: '1', properties: {} }], paging: { next: { after: '100' } } }),
+      json({ results: [{ id: '2', properties: {} }] }),
+    ])
+    const hs = createHubspotClient({ token: 't', fetch: fn })
+    const filters = [
+      { propertyName: 'pipeline', operator: 'EQ', value: '1534965463' },
+      { propertyName: 'hs_v2_date_entered_2462646003', operator: 'HAS_PROPERTY' },
+    ]
+    const deals = await hs.searchDeals(filters, ['dealstage'])
+    expect(deals.map((d) => d.id)).toEqual(['1', '2'])
+    const first = JSON.parse(String(calls[0].init.body))
+    expect(first.filterGroups).toEqual([{ filters }])
+    expect(JSON.parse(String(calls[1].init.body)).after).toBe('100')
+  })
+
+  it('getPipelineStageLabels maps stage id to label', async () => {
+    const { fn, calls } = fakeFetch([json({ stages: [{ id: '2462646003', label: 'Payment Done' }, { id: 3102360263, label: 'Renewal Done' }] })])
+    const hs = createHubspotClient({ token: 't', fetch: fn })
+    const labels = await hs.getPipelineStageLabels('1534965463')
+    expect(calls[0].url).toBe('https://api.hubapi.com/crm/v3/pipelines/deals/1534965463')
+    expect(labels.get('2462646003')).toBe('Payment Done')
+    expect(labels.get('3102360263')).toBe('Renewal Done')
+  })
+
+  it('listOwnerEmails pages and lowercases emails, skipping owners with none', async () => {
+    const { fn, calls } = fakeFetch([
+      json({ results: [{ id: '80276937', email: 'Harshit@AIAccountant.com' }], paging: { next: { after: 'x' } } }),
+      json({ results: [{ id: '1', email: null }] }),
+    ])
+    const hs = createHubspotClient({ token: 't', fetch: fn })
+    const owners = await hs.listOwnerEmails()
+    expect([...owners]).toEqual([['80276937', 'harshit@aiaccountant.com']])
+    expect(calls[1].url).toContain('after=x')
+  })
+})
+
 describe('createHubspotClient', () => {
   it('retries on 429 then succeeds', async () => {
     const sleeps: number[] = []

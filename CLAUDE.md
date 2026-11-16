@@ -15,7 +15,9 @@ Build order and open decisions: `docs/ROADMAP.md`.
 - Supabase project "Supabase VA" (single brain: every source writes there, UI and agents read from there)
 - Vercel AI SDK + OpenRouter (Claude) for agents
 - n8n (`n8n.aiaccountant.com`) is the collection layer; files land in SharePoint "VA Documents"
-- HubSpot stays the Growth CRM; two-way sync, one owner per field
+- Shadow Accountant is the source of truth for VA clients (16 Nov 2026 decision). HubSpot stays the sales CRM and
+  feeds in only: VA pipeline deals that have paid (stage label, amount paid, Active / Inactive, new clients).
+  Shadow owns the accountant, bucket, health and tickets. Pushing to HubSpot is off. Spec: `specs/hubspot-sync-v2.md`
 
 ## Hard rules (never break without explicit approval in chat)
 - No new tables, views or columns. Propose any schema change and wait for approval.

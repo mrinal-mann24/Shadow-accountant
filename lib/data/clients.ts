@@ -3,6 +3,7 @@ import type { AppUser } from '@/lib/auth/types'
 import { createAdminSupabase } from '@/lib/supabase/admin'
 import type { Row } from '@/lib/db/types'
 import { chunk, fetchAll } from './paginate'
+import { isActiveClient, matchesStatusFilter, type ClientStatusFilter } from './client-status'
 import { assertCanMutate, isInvalidInput, scopeOf, type Db } from './scope'
 import type { ClientDetail, ClientListItem, ContactItem, VaItem } from './types'
 
@@ -172,8 +173,14 @@ export function matchesSearch(c: ClientBase, search: string): boolean {
   return [c.client_name, c.legal_name, c.whatsapp_group_name].some((v) => v?.toLowerCase().includes(s))
 }
 
-/** Clients in the user's scope, sorted by name, with score and open ticket counts. */
-export async function listClients(user: AppUser, f: { search?: string; vaId?: string } = {}): Promise<ClientListItem[]> {
+/**
+ * Clients in the user's scope, sorted by name, with score and open ticket counts.
+ * Active clients only by default (status from the HubSpot sync); `status: 'inactive' | 'all'` for history.
+ */
+export async function listClients(
+  user: AppUser,
+  f: { search?: string; vaId?: string; status?: ClientStatusFilter } = {},
+): Promise<ClientListItem[]> {
   const scope = scopeOf(user)
   if (!scope.all && !scope.vaId) return []
   if (!scope.all && f.vaId && f.vaId !== scope.vaId) return []
@@ -184,7 +191,10 @@ export async function listClients(user: AppUser, f: { search?: string; vaId?: st
     if (vaFilter) q = q.eq('va_id', vaFilter)
     return q.order('client_name').order('client_id').range(from, to)
   })
-  const filtered = f.search ? rows.filter((r) => matchesSearch(r, f.search ?? '')) : rows
+  const statusFilter = f.status ?? 'active'
+  const filtered = rows.filter(
+    (r) => matchesStatusFilter(r.status, statusFilter) && (!f.search || matchesSearch(r, f.search)),
+  )
   return enrich(db, filtered)
 }
 
@@ -245,12 +255,13 @@ export async function listVas(user: AppUser): Promise<VaItem[]> {
   const [vasRes, clients] = await Promise.all([
     db.from('vas').select('va_id, va_name, email, status').order('va_name'),
     fetchAll('listVas', (from, to) =>
-      db.from('clients').select('client_id, va_id').order('client_id').range(from, to),
+      db.from('clients').select('client_id, va_id, status').order('client_id').range(from, to),
     ),
   ])
   if (vasRes.error) throw new Error(`listVas: ${vasRes.error.message}`)
+  // Active clients only, so the count matches Home and the team overview.
   const counts = new Map<string, number>()
-  for (const c of clients) if (c.va_id) counts.set(c.va_id, (counts.get(c.va_id) ?? 0) + 1)
+  for (const c of clients) if (c.va_id && isActiveClient(c.status)) counts.set(c.va_id, (counts.get(c.va_id) ?? 0) + 1)
   return (vasRes.data ?? []).map((v) => ({
     id: v.va_id,
     name: v.va_name,

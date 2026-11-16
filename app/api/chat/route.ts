@@ -32,7 +32,7 @@ export async function POST(req: Request): Promise<Response> {
   if (!parsed.ok) return jsonError(400, parsed.error)
   const { clientId, messages } = parsed.value
 
-  const clients = (await listClients(user)).map((c) => ({ id: c.id, name: c.name }))
+  const clients = (await listClients(user, { status: 'all' })).map((c) => ({ id: c.id, name: c.name }))
   const resolved = resolveChatScope({ clients, canSeeAll: scopeOf(user).all, requestedClientId: clientId })
   if (!resolved.ok) return jsonError(403, resolved.error)
   const scope = resolved.scope

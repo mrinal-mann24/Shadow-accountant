@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function AskPage({ searchParams }: { searchParams: Promise<{ client?: string | string[] }> }) {
   const user = await requireUser()
-  const [clients, sp] = await Promise.all([listClients(user), searchParams])
+  const [clients, sp] = await Promise.all([listClients(user, { status: 'all' }), searchParams])
   const options = clients.map((c) => ({ id: c.id, name: c.name }))
   const requested = typeof sp.client === 'string' ? sp.client : null
   const initialClientId = requested && options.some((c) => c.id === requested) ? requested : null

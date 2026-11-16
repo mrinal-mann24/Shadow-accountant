@@ -5,6 +5,7 @@ import type { JobResult } from '@/lib/jobs/guard'
 import type { Insert, Row } from '@/lib/db/types'
 import { computeClientMetrics } from '@/lib/metrics'
 import { chunk, fetchAll } from '@/lib/data/paginate'
+import { isActiveClient } from '@/lib/data/client-status'
 import { loadClientMessagesForMetrics } from '@/lib/metrics/load'
 import {
   computeHealthScore,
@@ -46,14 +47,13 @@ export async function runHealthScoreJob(o: { write: boolean; now: Date; clientId
   const slaMinutes = Number.isFinite(slaParsed) && slaParsed > 0 ? slaParsed : DEFAULT_SLA_MINUTES
   const windowDays = Math.max(1, Math.round(weights.window_days))
 
-  let clientsQuery = db.from('clients').select('client_id, va_id, whatsapp_group_id')
-  clientsQuery =
-    o.clientIds && o.clientIds.length > 0
-      ? clientsQuery.in('client_id', o.clientIds)
-      : clientsQuery.not('whatsapp_group_id', 'is', null)
+  let clientsQuery = db.from('clients').select('client_id, va_id, whatsapp_group_id, status')
+  const named = Boolean(o.clientIds && o.clientIds.length > 0)
+  clientsQuery = named ? clientsQuery.in('client_id', o.clientIds!) : clientsQuery.not('whatsapp_group_id', 'is', null)
   const clientsRes = await clientsQuery
   if (clientsRes.error) throw new Error(`clients: ${clientsRes.error.message}`)
-  const clients = clientsRes.data ?? []
+  // The daily run scores active clients only (Inactive = churned or parked in HubSpot); named clients always run.
+  const clients = (clientsRes.data ?? []).filter((c) => named || isActiveClient(c.status))
   if (clients.length === 0) return { ...result, details: { scoreDate, slaMinutes, weights, rows: [] } }
   const ids = clients.map((c) => c.client_id)
 

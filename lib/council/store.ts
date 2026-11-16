@@ -1,6 +1,7 @@
 import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Insert, Update } from '@/lib/db/types'
+import { isActiveClient } from '@/lib/data/client-status'
 
 // Every database read and write the council job makes, in one place. The job talks to this
 // interface so it can be tested with an in-memory fake.
@@ -79,11 +80,17 @@ function fail(where: string, error: { message: string } | null): void {
 export function supabaseCouncilStore(db: SupabaseClient<Database>): CouncilStore {
   return {
     async councilClients(clientIds) {
-      let q = db.from('clients').select('client_id, client_name, va_id, whatsapp_group_id').eq('council_enabled', true)
+      let q = db
+        .from('clients')
+        .select('client_id, client_name, va_id, whatsapp_group_id, status')
+        .eq('council_enabled', true)
       if (clientIds?.length) q = q.in('client_id', clientIds)
       const { data, error } = await q
       fail('clients', error)
-      return data ?? []
+      // Inactive clients (churned or parked in HubSpot) are skipped even when the council is on for them.
+      return (data ?? [])
+        .filter((c) => isActiveClient(c.status))
+        .map(({ client_id, client_name, va_id, whatsapp_group_id }) => ({ client_id, client_name, va_id, whatsapp_group_id }))
     },
 
     async pendingMessages(clientIds, limit, offset) {

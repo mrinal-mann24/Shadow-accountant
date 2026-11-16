@@ -5,7 +5,7 @@ import { dealIdsFromWebhook, verifySignatureV3 } from '@/lib/hubspot/signature'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-// HubSpot app webhook (deal.creation / deal.propertyChange for dealstage and amount).
+// HubSpot app webhook (deal.creation / deal.propertyChange for dealstage and amount_paid).
 // Verifies X-HubSpot-Signature-v3, then syncs only the deals in the payload (dry-run unless JOBS_WRITE_ENABLED).
 export async function POST(req: Request) {
   const body = await req.text()

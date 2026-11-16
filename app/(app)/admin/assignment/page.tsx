@@ -14,7 +14,7 @@ export const metadata = { title: 'Client assignment' }
 
 async function load(user: AppUser, search: string) {
   try {
-    const [clients, vas] = await Promise.all([listClients(user, search ? { search } : undefined), listVas(user)])
+    const [clients, vas] = await Promise.all([listClients(user, { ...(search ? { search } : {}), status: 'all' }), listVas(user)])
     return { ok: true as const, clients: sortForAssignment(clients), vas }
   } catch (e) {
     console.error('[admin] assignment load failed', e)

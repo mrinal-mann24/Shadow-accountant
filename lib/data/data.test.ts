@@ -116,6 +116,13 @@ describe('listClients scope', () => {
     expect(list.map((c) => c.id)).toEqual(['c1'])
     expect(list[0]).toMatchObject({ vaName: 'Asha', serviceScore: 80, openTickets: 1, openEscalations: 1, unansweredCount: 1 })
   })
+  it('lists active clients by default and inactive ones only when asked', async () => {
+    const beta = fake.tables.clients.find((c) => c.client_id === 'c2') as Record<string, unknown>
+    beta.status = 'Inactive'
+    expect((await listClients(admin)).map((c) => c.id)).toEqual(['c1', 'c3'])
+    expect((await listClients(admin, { status: 'inactive' })).map((c) => c.id)).toEqual(['c2'])
+    expect((await listClients(admin, { status: 'all' })).map((c) => c.id)).toEqual(['c1', 'c2', 'c3'])
+  })
   it('reads last message time live from client_messages, not from the stored score', async () => {
     const all = await listClients(admin)
     const byId = new Map(all.map((c) => [c.id, c]))
