@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    { "path": "/api/jobs/health-score", "schedule": "30 1 * * *" },
+    { "path": "/api/jobs/council", "schedule": "*/15 * * * *" },
+    { "path": "/api/jobs/hubspot-sync", "schedule": "*/30 * * * *" },
+    { "path": "/api/jobs/embed", "schedule": "0 * * * *" }
+  ]
+}
