@@ -1,4 +1,5 @@
--- PROPOSAL ONLY. NOT APPLIED. Needs approval (CLAUDE.md: no new SQL functions without approval).
+-- APPLIED on 17 Nov 2026 (user approved in chat: "Yes vector search we need only"). Checked after: anon cannot execute,
+-- service_role can. Still needs the embed job to write embeddings before it returns anything (0 embedded today).
 -- Owner: context-agent. Used by lib/agent/store.ts searchMessagesVector when VECTOR_SEARCH_APPROVED = true.
 --
 -- Why: PostgREST cannot order by pgvector distance, so semantic search over client_messages.embedding

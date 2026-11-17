@@ -1,4 +1,5 @@
 import 'server-only'
+import { maskCredentials } from '@/lib/ai/redact'
 import type { JobResult } from '@/lib/jobs/guard'
 import { EMBED_DIMS, embedModelId, embedTexts, toPgVector } from './models'
 import { supabaseEmbedStore, type EmbedStore } from './store'
@@ -43,7 +44,8 @@ export async function runEmbedJob(o: { write: boolean; limit?: number }, deps: P
 
   let vectors: number[][]
   try {
-    vectors = await d.embed(rows.map((r) => r.body))
+    // Credential values never leave for the embedding model (CLAUDE.md hard rule).
+    vectors = await d.embed(rows.map((r) => maskCredentials(r.body)))
   } catch (e) {
     // A wrong dimension count lands here too (assertDims), with a clear message. Nothing is written.
     return { ...base, processed: rows.length, written: 0, errors: [e instanceof Error ? e.message : String(e)], details: { pending, model } }

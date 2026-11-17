@@ -102,13 +102,22 @@ describe('searchMessages', () => {
     expect(out).toEqual({ items: [], error: 'Search failed: boom' })
   })
 
-  it('does not call vector search while it is not approved', async () => {
+  it('uses vector search (approved) when messages are embedded', async () => {
     const store = fakeStore({ countEmbedded: vi.fn(async () => 10) })
     const embedQuery = vi.fn(async () => [0.1])
     const { tools } = setup(fixedC1, { store, embedQuery })
     await run(tools.searchMessages, { query: 'gst' })
-    expect(store.searchMessagesVector).not.toHaveBeenCalled()
+    expect(embedQuery).toHaveBeenCalledWith('gst')
+    expect(store.searchMessagesVector).toHaveBeenCalled()
+  })
+
+  it('skips vector search when nothing is embedded yet', async () => {
+    const store = fakeStore({ countEmbedded: vi.fn(async () => 0) })
+    const embedQuery = vi.fn(async () => [0.1])
+    const { tools } = setup(fixedC1, { store, embedQuery })
+    await run(tools.searchMessages, { query: 'gst' })
     expect(embedQuery).not.toHaveBeenCalled()
+    expect(store.searchMessagesVector).not.toHaveBeenCalled()
   })
 })
 

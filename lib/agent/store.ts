@@ -41,7 +41,8 @@ export interface AgentStore {
  * Vector search needs the SQL function in supabase/proposals/match-client-messages.sql, which is NOT applied.
  * Flip to true only after it is approved and applied. Until then search is full text only.
  */
-export const VECTOR_SEARCH_APPROVED = false
+// Approved 17 Nov 2026; public.match_client_messages applied (supabase/proposals/match-client-messages.sql).
+export const VECTOR_SEARCH_APPROVED = true
 
 const HIT_COLS = 'message_id, client_id, message_timestamp, body, sender_name, sender_phone, direction'
 const IN_CHUNK = 150
