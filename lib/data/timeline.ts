@@ -3,7 +3,7 @@ import { maskNullable } from '@/lib/ai/redact'
 import type { AppUser } from '@/lib/auth/types'
 import { createAdminSupabase } from '@/lib/supabase/admin'
 import { getTeamNumbers } from '@/lib/team'
-import { DOCUMENT_COLS, MEETING_COLS, toDocumentItem, toMeetingItem } from './documents'
+import { DOCUMENT_COLS, MEETING_COLS, isClientFile, toDocumentItem, toMeetingItem } from './documents'
 import { MESSAGE_COLS, clampLimit, toMessageItem } from './messages'
 import { chunk } from './paginate'
 import { canAccessClient, scopedClientIds, type Db } from './scope'
@@ -87,17 +87,22 @@ export function sortTimeline<T extends TimelineItem>(items: T[]): T[] {
 }
 
 /** Messages, files, meetings and tickets for one client, newest first (default 100, max 500). */
-export async function getTimeline(user: AppUser, clientId: string, o: { limit?: number } = {}): Promise<TimelineItem[]> {
+/** clientOnly: only messages and files the client sent (no outgoing team messages or files); tickets and meetings stay. */
+export async function getTimeline(
+  user: AppUser,
+  clientId: string,
+  o: { limit?: number; clientOnly?: boolean } = {},
+): Promise<TimelineItem[]> {
   const db = createAdminSupabase()
   if (!(await canAccessClient(db, user, clientId))) return []
   const limit = clampLimit(o.limit, 100, 500)
 
   const [team, msgs, docs, meetings, tickets] = await Promise.all([
     getTeamNumbers(),
-    db
-      .from('client_messages')
-      .select(MESSAGE_COLS)
-      .eq('client_id', clientId)
+    (o.clientOnly
+      ? db.from('client_messages').select(MESSAGE_COLS).eq('client_id', clientId).eq('direction', 'incoming')
+      : db.from('client_messages').select(MESSAGE_COLS).eq('client_id', clientId)
+    )
       .order('message_timestamp', { ascending: false })
       .order('message_id', { ascending: false })
       .limit(limit),
@@ -126,7 +131,9 @@ export async function getTimeline(user: AppUser, clientId: string, o: { limit?: 
 
   const items: TimelineItem[] = [
     ...(msgs.data ?? []).map((r) => messageToTimeline(toMessageItem(r, team), clientId)),
-    ...(docs.data ?? []).map((r) => documentToTimeline(toDocumentItem(r), clientId)),
+    ...(docs.data ?? [])
+      .filter((r) => !o.clientOnly || isClientFile(r, team))
+      .map((r) => documentToTimeline(toDocumentItem(r), clientId)),
     ...(meetings.data ?? []).map((r) => meetingToTimeline(toMeetingItem(r), clientId)),
     ...(tickets.data ?? []).map((r) => ticketToTimeline(r)),
   ].filter((i): i is TimelineItem => i !== null)

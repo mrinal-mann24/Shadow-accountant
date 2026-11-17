@@ -21,7 +21,6 @@ import { askModel, withOneRetry, type ModelVote, type VoteFn } from './vote'
 
 export const RECENT_MESSAGES = 15
 export const CLOSED_WINDOW_DAYS = 7
-export const OPENED_BY = 'council'
 const DEFAULT_MAX_ATTEMPTS = 3
 export const DEFAULT_LIMIT = 25
 export const MAX_LIMIT = 100
@@ -281,7 +280,7 @@ function touch(c: StoredConversation, m: PendingMessage, direction: 'incoming' |
  * Write order per message (each step makes a crash after it safe):
  *  - 'new': find or create the ticket first, then insert the verdict with final_conv_id set. A crash between
  *    the two leaves a ticket with no verdict; the next run votes again and reuses that ticket (same client,
- *    opened_by council, opened_at = message time) instead of opening a duplicate.
+ *    same client and opened_at = message time) instead of opening a duplicate.
  *  - others: insert the verdict first (so the message is never voted on twice), then update the ticket.
  *    A crash after the verdict is finished by finishStoredVerdict on the next run.
  *  - then mark the message processed.
@@ -323,7 +322,8 @@ async function applyDecision(p: {
       (await store.findCouncilTicket(m.client_id, m.message_timestamp)) ??
       (await store.createConversation({
         client_id: m.client_id,
-        opened_by: OPENED_BY,
+        // conversations.opened_by only allows 'incoming' | 'outgoing' (DB check): who sent the opening message.
+        opened_by: direction,
         va_id: client.va_id,
         status: 'open',
         opened_at: m.message_timestamp,

@@ -1,12 +1,13 @@
 import 'server-only'
 import type { AppUser } from '@/lib/auth/types'
 import { createAdminSupabase } from '@/lib/supabase/admin'
+import { getTeamNumbers, normalizePhone } from '@/lib/team'
 import type { Row } from '@/lib/db/types'
 import { fetchAll } from './paginate'
 import { canAccessClient } from './scope'
 import type { DocumentItem, MeetingItem } from './types'
 
-export const DOCUMENT_COLS = 'upload_id, client_id, file_name, folder_name, file_type, file_size, uploaded_at, group_name'
+export const DOCUMENT_COLS = 'upload_id, client_id, file_name, folder_name, file_type, file_size, uploaded_at, group_name, sender_phone'
 export const MEETING_COLS =
   'id, client_id, subject, meeting_start, meeting_end, meeting_date, meeting_duration_minutes, organizer_name, poc_name, meeting_type, transcript_status, teams_url, transcript'
 
@@ -68,7 +69,14 @@ export function toMeetingItem(r: MeetingRow): MeetingItem {
 }
 
 /** Files logged in document_uploads (WhatsApp files saved to SharePoint), newest first. [] when out of scope. */
-export async function listDocuments(user: AppUser, clientId: string): Promise<DocumentItem[]> {
+/** True when a file was sent by the client (not by a team number). Unknown sender counts as the client's. */
+export function isClientFile(r: { sender_phone: string | null }, team: Set<string>): boolean {
+  const phone = normalizePhone(r.sender_phone)
+  return phone === null || !team.has(phone)
+}
+
+/** clientOnly: leave out files our team sent into the group (the client page shows only what the client sent). */
+export async function listDocuments(user: AppUser, clientId: string, o: { clientOnly?: boolean } = {}): Promise<DocumentItem[]> {
   const db = createAdminSupabase()
   if (!(await canAccessClient(db, user, clientId))) return []
   const rows = await fetchAll('listDocuments', (from, to) =>
@@ -80,7 +88,9 @@ export async function listDocuments(user: AppUser, clientId: string): Promise<Do
       .order('upload_id')
       .range(from, to),
   )
-  return rows.map(toDocumentItem)
+  if (!o.clientOnly) return rows.map(toDocumentItem)
+  const team = await getTeamNumbers()
+  return rows.filter((r) => isClientFile(r, team)).map(toDocumentItem)
 }
 
 /** Meetings linked to the client (va_meeting_transcripts.client_id), newest first. [] when out of scope. */

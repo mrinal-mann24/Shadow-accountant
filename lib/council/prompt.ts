@@ -19,7 +19,7 @@ Rules:
 - target_conversation_id must be copied exactly from the ids given in the context, or be null. Never invent an id.
 - Prefer "continue" over "new" when an open ticket is about the same topic.
 - Only "close" when resolution is clear. A plain "thanks" is no_action, not close.
-- tag: "escalation" if the client threatens to leave, asks for a manager, or the issue is serious and urgent; "complaint" if the client is unhappy with our service; "positive" if the client praises us; otherwise "neutral".
+- tag: "escalation" if the client threatens to leave, asks for a manager, or the issue is serious and urgent; "complaint" if the client is unhappy with our service; "positive" if the client praises us; "suspense" if the ticket is about bank or payment entries we cannot match to a bill, receipt or invoice yet (for example the bank statement shows 10 vendor payments but only 7 receipts were shared, and we keep asking the client what the other 3 are); otherwise "neutral".
 - fault: "us" if our team caused the problem (delay, mistake, missed deadline), "client" if the client caused it (late documents, wrong data), otherwise "neither".
 - client_tone and va_tone: the tone of the client and of our team in the latest messages.
 - title: short, plain, at most 80 characters, for example "GST return for October pending". summary: one to three sentences on the ticket so far including this message.

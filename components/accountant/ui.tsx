@@ -68,6 +68,7 @@ const TAG_CLASSES: Record<string, string> = {
   complaint: 'bg-warning/10 text-warning',
   positive: 'bg-success/10 text-success',
   neutral: 'bg-secondary text-muted-foreground',
+  suspense: 'bg-primary/10 text-primary',
 }
 
 export function TagBadge({ tag }: { tag: string | null }) {

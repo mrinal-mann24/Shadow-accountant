@@ -246,7 +246,7 @@ describe('runCouncilJob write mode', () => {
     })
     expect(writes.created[0]).toMatchObject({
       client_id: 'c1',
-      opened_by: 'council',
+      opened_by: 'incoming',
       va_id: 'va-1',
       tag: 'complaint',
       fault: 'us',

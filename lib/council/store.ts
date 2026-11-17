@@ -191,7 +191,6 @@ export function supabaseCouncilStore(db: SupabaseClient<Database>): CouncilStore
         .from('conversations')
         .select('id')
         .eq('client_id', clientId)
-        .eq('opened_by', 'council')
         .eq('opened_at', openedAt)
         .order('id')
         .limit(1)

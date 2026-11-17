@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const DECISIONS = ['new', 'continue', 'close', 'reopen', 'no_action'] as const
-export const TAGS = ['escalation', 'complaint', 'neutral', 'positive'] as const
+export const TAGS = ['escalation', 'complaint', 'neutral', 'positive', 'suspense'] as const
 export const FAULTS = ['us', 'client', 'neither'] as const
 export const TONES = ['calm', 'frustrated', 'angry', 'happy', 'neutral'] as const
 

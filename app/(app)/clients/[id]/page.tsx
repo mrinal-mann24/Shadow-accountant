@@ -27,9 +27,9 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const [history, tickets, documents, meetings, timeline, bucket] = await Promise.all([
     getScoreHistory(user, id, 30),
     listConversations(user, { clientId: id }),
-    listDocuments(user, id),
+    listDocuments(user, id, { clientOnly: true }),
     listMeetings(user, id),
-    getTimeline(user, id, { limit: 100 }),
+    getTimeline(user, id, { limit: 100, clientOnly: true }),
     getClientBucket(id),
   ])
   const now = new Date()

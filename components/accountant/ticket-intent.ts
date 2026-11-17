@@ -13,6 +13,7 @@ export const TAG_LABELS: Record<Tag, string> = {
   complaint: 'Complaint',
   neutral: 'Neutral',
   positive: 'Positive',
+  suspense: 'Suspense',
 }
 
 export function isTag(v: unknown): v is Tag {
