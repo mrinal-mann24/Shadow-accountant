@@ -3,6 +3,7 @@
 Status: DONE. `npm run build` (no env set), `typecheck`, `test` (3 files, 19 tests) and `lint` all pass.
 
 ## Built
+
 - Next.js 16.4.6 App Router, TypeScript strict, no `src/`: `app/`, `components/`, `lib/` at repo root. Path alias `@/*` to repo root.
 - Tailwind CSS v4 via `@tailwindcss/postcss` (`postcss.config.mjs`), no tailwind.config file; theme lives in `app/globals.css`.
 - ESLint 9 flat config (`eslint.config.mjs`): `eslint-config-next/core-web-vitals` + `eslint-config-next/typescript`.
@@ -13,11 +14,12 @@ Status: DONE. `npm run build` (no env set), `typecheck`, `test` (3 files, 19 tes
   card, dialog, dropdown-menu, input, label, scroll-area, select, separator, sheet, skeleton, table, tabs,
   textarea, tooltip.
 - `app/layout.tsx` (lang en-IN, wraps everything in `TooltipProvider`, metadata title template
-  `%s | Shadow Accounting`), `app/globals.css` (tokens), `app/page.tsx` (redirects to `/home`).
+  `%s | Shadow Accountant`), `app/globals.css` (tokens), `app/page.tsx` (redirects to `/home`).
 - `lib/env.ts`, `lib/supabase/{server,browser,admin}.ts`, `lib/db/types.ts`, `lib/jobs/guard.ts`, `lib/utils.ts`,
   `.env.example`, plus tests `lib/env.test.ts`, `lib/jobs/guard.test.ts`, `lib/utils.test.ts`.
 
 ## Exports (exact import paths + signatures)
+
 ```ts
 // lib/env.ts  (lazy: nothing validated at import; call inside handlers/jobs only)
 import { serverEnv, publicEnv, type ServerEnv, type PublicEnv } from '@/lib/env'
@@ -61,6 +63,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, 
 ```
 
 ### Job route pattern (scoring, council, hubspot, context-agent)
+
 ```ts
 export async function GET(req: Request) {
   try { assertCronAuth(req) } catch (e) { if (e instanceof Response) return e; throw e }
@@ -68,9 +71,11 @@ export async function GET(req: Request) {
   return Response.json(result)
 }
 ```
+
 Route handlers that read env or Supabase should `export const dynamic = 'force-dynamic'` so `next build` never runs them.
 
 ## Theme tokens (app/globals.css)
+
 - `background` #ffffff, `foreground` #000000, `muted-foreground` #666666 (grey copy), `primary` #314DD0 (one
   primary action per screen; `ring` is the same), `border`/`input` #e4e4e7, `muted`/`secondary`/`accent` #f4f4f5.
 - Extra: `destructive` #c62828, `success` #1b7f3b, `warning` #b26a00 (usable as `text-success`, `bg-warning/10` etc).
@@ -78,6 +83,7 @@ Route handlers that read env or Supabase should `export const dynamic = 'force-d
 - No dark theme defined (brand is white). `dark:` classes in shadcn files are inert.
 
 ## Installed versions
+
 Runtime: next 16.4.6, react 19.3.1, react-dom 19.3.1, @supabase/supabase-js 2.119.0, @supabase/ssr 0.12.7,
 server-only 0.0.1, zod 4.6.7, ai 7.0.173, @openrouter/ai-sdk-provider 3.1.0, clsx 2.1.1, tailwind-merge 3.7.0,
 class-variance-authority 0.7.1, lucide-react 1.73.0, radix-ui 1.8.1, tw-animate-css 1.4.0.
@@ -85,6 +91,7 @@ Dev: typescript 5.9.3, @types/node 24.19.2, @types/react 19.3.0, @types/react-do
 eslint-config-next 16.4.6, tailwindcss 4.3.5, @tailwindcss/postcss 4.3.5, vitest 5.1.0.
 
 ## Decisions
+
 - TypeScript 5.9.3, not 7.x: typescript-eslint (used by eslint-config-next) supports `<6.1.0` only.
 - ESLint 9, not 10: eslint-config-next plugins are proven on 9.
 - zod is v4 (`import { z } from 'zod'`; use `z.url()`, `{ error: '...' }`). The AI SDK v7 accepts zod 4 schemas.
@@ -98,12 +105,14 @@ eslint-config-next 16.4.6, tailwindcss 4.3.5, @tailwindcss/postcss 4.3.5, vitest
   and removed the package. If you run `npx shadcn add` yourself, check for this. Prefer asking foundation.
 
 ## Requests
+
 - integrator: update CLAUDE.md "Commands" section (no longer "not scaffolded"): `npm run lint | typecheck | test | build`, `npm run dev`.
 - integrator: `vercel.json` crons must send the CRON_SECRET (Vercel Cron does this automatically when `CRON_SECRET` is set in the project).
 - integrator: env vars to set in Vercel are exactly the names in `.env.example`. No extra env vars added by foundation.
 - anyone: need another shadcn component or package? Write it under Requests in your notes for foundation / integrator.
 
 ## Known gaps
+
 - `npm audit`: 7 moderate (dev only) via minimatch inside @typescript-eslint, pulled by eslint-config-next. `npm audit fix`
   could not resolve it without a forced major change. Not shipped to production.
 - Two extraneous optional packages (@emnapi/runtime, @img/sharp-wasm32) in node_modules; harmless, `npm prune` clears them.

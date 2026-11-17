@@ -1,4 +1,4 @@
-# Shadow Accounting
+# Shadow Accountant
 
 Ops platform for AI Accountant's Virtual Accounting practice: one timeline per client, AI ticketing from
 WhatsApp (the ticket council), a daily health score, HubSpot two-way sync, role-based screens and a
@@ -8,10 +8,12 @@ Background and decisions: `docs/CONTEXT.md`. Build order: `docs/ROADMAP.md`. Wor
 Build contracts and each part's notes: `docs/agents/CONTRACTS.md` and `docs/agents/notes/`.
 
 ## Stack
+
 Next.js 16 (App Router) + TypeScript, Tailwind CSS v4 + shadcn/ui, Supabase ("Supabase VA") for auth and data,
 Vercel AI SDK 7 + OpenRouter for the council, embeddings and chat, Vitest for tests. Hosted on Vercel.
 
 ## Local setup
+
 Needs Node 20.9 or newer (tested on Node 24).
 
 ```bash
@@ -20,43 +22,45 @@ cp .env.example .env.local      # then fill in the values (see Environment)
 npm run dev                     # http://localhost:3000
 ```
 
-| Command | What it does |
-|---|---|
-| `npm run dev` | Dev server |
-| `npm run lint` | ESLint (flat config, eslint-config-next) |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm run test` | Vitest, node environment, pure functions and fakes only (no network) |
-| `npm run build` | Production build; works with no env set |
+| Command             | What it does                                                         |
+| ------------------- | -------------------------------------------------------------------- |
+| `npm run dev`       | Dev server                                                           |
+| `npm run lint`      | ESLint (flat config, eslint-config-next)                             |
+| `npm run typecheck` | `tsc --noEmit`                                                       |
+| `npm run test`      | Vitest, node environment, pure functions and fakes only (no network) |
+| `npm run build`     | Production build; works with no env set                              |
 
 Dev login (local only): set `DEV_LOGIN_EMAIL` (and optionally `DEV_LOGIN_ROLE`) in `.env.local`. The login page
 then shows a "Dev login as ..." button. It is ignored whenever `NODE_ENV` is `production`. The dev identity id is
 `dev-login:<email>`, not a uuid.
 
 ## Environment
+
 Names only live in `.env.example`; never commit values. Set the same names in Vercel (Production and Preview).
 
-| Name | Needed for | Notes |
-|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | everything | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | everything | Used for auth only (sign in, session) |
-| `SUPABASE_SERVICE_ROLE_KEY` | everything | Server only. All data reads and writes go through `lib/data` with this key, scoped by the signed-in user |
-| `OPENROUTER_API_KEY` | council, chat, embed | |
-| `OPENROUTER_MODEL_A` | council, chat | Anthropic model id, for example `anthropic/claude-sonnet-5`. No default in code |
-| `OPENROUTER_MODEL_B` | council | Second council model, for example `openai/gpt-5.6-luna` |
-| `OPENROUTER_EMBED_MODEL` | embed, vector search | Must return 1536 dimensions (`vector(1536)`), for example `openai/text-embedding-3-small` |
-| `CRON_SECRET` | every job route | Job routes reject every request when it is unset. Vercel Cron sends `Authorization: Bearer $CRON_SECRET` once it is set in the project |
-| `JOBS_WRITE_ENABLED` | every job and the HubSpot webhook | Writes happen only when this is `true` and the job is in `JOBS_WRITE_ONLY`. Default: dry-run |
-| `JOBS_WRITE_ONLY` | every job and the HubSpot webhook | Comma list of the jobs allowed to write: `health-score`, `council`, `hubspot-sync` (also the webhook), `embed`. Blank means no job writes (fails closed), so each job has to be named |
-| `HUBSPOT_ACCESS_TOKEN` | HubSpot sync | Private app token |
-| `HUBSPOT_WEBHOOK_SECRET` | HubSpot webhook | The HubSpot app's client secret (signature v3) |
-| `HUBSPOT_VA_PIPELINE_ID`, `HUBSPOT_VA_PAID_STAGE_ID`, `HUBSPOT_VA_ACTIVE_STAGE_IDS` | HubSpot sync | The VA client rule (`specs/hubspot-sync-v2.md`). Blank uses the live portal's ids: Virtual Accounting pipeline, Payment Done, and Payment Done / Ready for Renewal / Renewal Done |
-| `HUBSPOT_IGNORE_DEAL_IDS` | HubSpot sync | Deals never treated as clients (test deals) |
-| `HUBSPOT_PUSH_ENABLED` | HubSpot sync | `true` pushes the `va_*` deal properties. Keep `false` until those properties exist in HubSpot |
-| `DEV_LOGIN_EMAIL`, `DEV_LOGIN_ROLE` | local only | Leave blank in Vercel |
-| `APP_TIMEZONE` | scoring, chat, Draft reply, the "first reply in business hours" metric | Default `Asia/Kolkata`. The SLA itself is clock time, 24x7 |
-| `NEXT_PUBLIC_SITE_URL` | Microsoft sign-in | The deployed app's URL, used for the sign-in redirect instead of request headers. Blank locally |
+| Name                                                                                | Needed for                                                             | Notes                                                                                                                                                                                 |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`                                                          | everything                                                             | Supabase project URL                                                                                                                                                                  |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY`                                                     | everything                                                             | Used for auth only (sign in, session)                                                                                                                                                 |
+| `SUPABASE_SERVICE_ROLE_KEY`                                                         | everything                                                             | Server only. All data reads and writes go through `lib/data` with this key, scoped by the signed-in user                                                                              |
+| `OPENROUTER_API_KEY`                                                                | council, chat, embed                                                   |                                                                                                                                                                                       |
+| `OPENROUTER_MODEL_A`                                                                | council, chat                                                          | Anthropic model id, for example `anthropic/claude-sonnet-5`. No default in code                                                                                                       |
+| `OPENROUTER_MODEL_B`                                                                | council                                                                | Second council model, for example `openai/gpt-5.6-luna`                                                                                                                               |
+| `OPENROUTER_EMBED_MODEL`                                                            | embed, vector search                                                   | Must return 1536 dimensions (`vector(1536)`), for example `openai/text-embedding-3-small`                                                                                             |
+| `CRON_SECRET`                                                                       | every job route                                                        | Job routes reject every request when it is unset. Vercel Cron sends `Authorization: Bearer $CRON_SECRET` once it is set in the project                                                |
+| `JOBS_WRITE_ENABLED`                                                                | every job and the HubSpot webhook                                      | Writes happen only when this is `true` and the job is in `JOBS_WRITE_ONLY`. Default: dry-run                                                                                          |
+| `JOBS_WRITE_ONLY`                                                                   | every job and the HubSpot webhook                                      | Comma list of the jobs allowed to write: `health-score`, `council`, `hubspot-sync` (also the webhook), `embed`. Blank means no job writes (fails closed), so each job has to be named |
+| `HUBSPOT_ACCESS_TOKEN`                                                              | HubSpot sync                                                           | Private app token                                                                                                                                                                     |
+| `HUBSPOT_WEBHOOK_SECRET`                                                            | HubSpot webhook                                                        | The HubSpot app's client secret (signature v3)                                                                                                                                        |
+| `HUBSPOT_VA_PIPELINE_ID`, `HUBSPOT_VA_PAID_STAGE_ID`, `HUBSPOT_VA_ACTIVE_STAGE_IDS` | HubSpot sync                                                           | The VA client rule (`specs/hubspot-sync-v2.md`). Blank uses the live portal's ids: Virtual Accounting pipeline, Payment Done, and Payment Done / Ready for Renewal / Renewal Done     |
+| `HUBSPOT_IGNORE_DEAL_IDS`                                                           | HubSpot sync                                                           | Deals never treated as clients (test deals)                                                                                                                                           |
+| `HUBSPOT_PUSH_ENABLED`                                                              | HubSpot sync                                                           | `true` pushes the `va_*` deal properties. Keep `false` until those properties exist in HubSpot                                                                                        |
+| `DEV_LOGIN_EMAIL`, `DEV_LOGIN_ROLE`                                                 | local only                                                             | Leave blank in Vercel                                                                                                                                                                 |
+| `APP_TIMEZONE`                                                                      | scoring, chat, Draft reply, the "first reply in business hours" metric | Default `Asia/Kolkata`. The SLA itself is clock time, 24x7                                                                                                                            |
+| `NEXT_PUBLIC_SITE_URL`                                                              | Microsoft sign-in                                                      | The deployed app's URL, used for the sign-in redirect instead of request headers. Blank locally                                                                                       |
 
 ## Supabase Auth: Microsoft (Azure) sign-in
+
 Done once, in the dashboards, by someone with access. Nothing in this repo changes Supabase settings.
 
 1. **Azure portal** (Microsoft Entra ID, App registrations, New registration):
@@ -86,26 +90,28 @@ Done once, in the dashboards, by someone with access. Nothing in this repo chang
 Routes: `/login`, `/auth/callback` (code exchange), `/auth/sign-out` (POST).
 
 ## Screens
-| Route | Who | What |
-|---|---|---|
-| `/home` | everyone | KPIs, my open tickets by SLA, clients by bucket, today's activity |
-| `/clients`, `/clients/<id>` | everyone (own clients for accountants) | Client list and Client 360 (health, tickets, files grid, timeline, profile, meetings) |
-| `/tickets` | everyone | Ticket list with close, reopen and tag (accountants and admins) |
-| `/ask` | everyone | AI chat over the user's own clients, every claim cited |
-| `/admin`, `/admin/assignment`, `/admin/users` | admin (engineer sees Team only) | Team workload, client assignment, users and roles |
-| `/engineer` | engineer | Data sources, failed processing with retry, council on / off, job commands, AI usage, view as |
+
+| Route                                         | Who                                    | What                                                                                          |
+| --------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `/home`                                       | everyone                               | KPIs, my open tickets by SLA, clients by bucket, today's activity                             |
+| `/clients`, `/clients/<id>`                   | everyone (own clients for accountants) | Client list and Client 360 (health, tickets, files grid, timeline, profile, meetings)         |
+| `/tickets`                                    | everyone                               | Ticket list with close, reopen and tag (accountants and admins)                               |
+| `/ask`                                        | everyone                               | AI chat over the user's own clients, every claim cited                                        |
+| `/admin`, `/admin/assignment`, `/admin/users` | admin (engineer sees Team only)        | Team workload, client assignment, users and roles                                             |
+| `/engineer`                                   | engineer                               | Data sources, failed processing with retry, council on / off, job commands, AI usage, view as |
 
 ## Scheduled jobs
+
 All four are `GET` (and `POST`, except HubSpot sync) routes that need `Authorization: Bearer $CRON_SECRET` and
 return a JSON `JobResult`: `{ job, dryRun, processed, written, errors, details }`. Read `details` on dry runs: it
 shows exactly what a write run would change.
 
-| Job | Route | Schedule (`vercel.json`, UTC) | Writes in write mode |
-|---|---|---|---|
-| Health score | `/api/jobs/health-score[?clientIds=a,b]` | `30 1 * * *` (7:00 am IST) | `client_scores`, `client_score_history` |
-| Ticket council | `/api/jobs/council[?limit=25&clientIds=a,b]` | `*/15 * * * *` | `council_verdicts`, `conversations`, `client_messages.conversation_id` / `processed_at`, `message_processing_log` |
-| HubSpot sync | `/api/jobs/hubspot-sync` | `*/30 * * * *` | `clients.deal_stage` (label), `clients.amount_paid`, `clients.status` (Active / Inactive), new clients for active VA deals, settings `hubspot_last_sync`; HubSpot `va_*` deal properties only when `HUBSPOT_PUSH_ENABLED=true` |
-| Embeddings | `/api/jobs/embed[?limit=1..100]` | `0 * * * *` | `client_messages.embedding` |
+| Job            | Route                                        | Schedule (`vercel.json`, UTC) | Writes in write mode                                                                                                                                                                                                           |
+| -------------- | -------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Health score   | `/api/jobs/health-score[?clientIds=a,b]`     | `30 1 * * *` (7:00 am IST)    | `client_scores`, `client_score_history`                                                                                                                                                                                        |
+| Ticket council | `/api/jobs/council[?limit=25&clientIds=a,b]` | `*/15 * * * *`                | `council_verdicts`, `conversations`, `client_messages.conversation_id` / `processed_at`, `message_processing_log`                                                                                                              |
+| HubSpot sync   | `/api/jobs/hubspot-sync`                     | `*/30 * * * *`                | `clients.deal_stage` (label), `clients.amount_paid`, `clients.status` (Active / Inactive), new clients for active VA deals, settings `hubspot_last_sync`; HubSpot `va_*` deal properties only when `HUBSPOT_PUSH_ENABLED=true` |
+| Embeddings     | `/api/jobs/embed[?limit=1..100]`             | `0 * * * *`                   | `client_messages.embedding`                                                                                                                                                                                                    |
 
 The HubSpot webhook (`POST /api/webhooks/hubspot`) checks the v3 signature and runs the sync for only the deals
 in the payload; it follows the same write switch as `hubspot-sync`.
@@ -114,6 +120,7 @@ Vercel Cron schedules more often than once a day need a Vercel Pro plan. Crons r
 deployment.
 
 ### Run a job by hand (dry run)
+
 With `JOBS_WRITE_ENABLED` unset or `false` (or the job not in `JOBS_WRITE_ONLY`), every run is a dry run and only
 reports. Job routes return 500 when the run failed (a fatal step, a write run that wrote nothing, or every item
 failing) and 200 for partial per-item errors, so cron logs show failures.
@@ -141,22 +148,24 @@ npx tsx --conditions=react-server --env-file=.env.local scripts/council-eval.ts 
 ```
 
 ### Turning writes on
+
 Writes need explicit approval in chat for each job (`CLAUDE.md` hard rules). Turn them on one job at a time with
 `JOBS_WRITE_ENABLED=true` plus `JOBS_WRITE_ONLY=<job>`, then add the next job to the list once it is checked. A
 blank `JOBS_WRITE_ONLY` means no job writes.
 
-| Job | Before writes |
-|---|---|
-| health-score | Read-only check that `client_score_history` has a unique constraint on `(client_id, score_date)`. Dry run on a few clients, compare with an accountant's ranking, and get the formula signed off (ROADMAP stage 5) |
-| council | Confirm the old council is switched off, confirm `settings.sla_minutes`, run `council-eval.ts --offline` and `--limit 50`, and agree the agreement bar (ROADMAP stage 6) |
+| Job          | Before writes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| health-score | Read-only check that `client_score_history` has a unique constraint on `(client_id, score_date)`. Dry run on a few clients, compare with an accountant's ranking, and get the formula signed off (ROADMAP stage 5)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| council      | Confirm the old council is switched off, confirm `settings.sla_minutes`, run `council-eval.ts --offline` and `--limit 50`, and agree the agreement bar (ROADMAP stage 6)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | hubspot-sync | Private app scopes `crm.objects.deals.read`, `crm.schemas.deals.read` and `crm.objects.owners.read` (add `crm.objects.deals.write` only if push is approved later). Webhook subscriptions `deal.creation` and `deal.propertyChange` for `dealstage` and `amount_paid`, to `https://<host>/api/webhooks/hubspot`. Every run reconciles all paid deals in the VA pipeline (about 65), so a missed webhook heals on the next run. Review a dry run's `details.pull`: `counts`, `updates` (stage label, `amount_paid`, Active / Inactive), `creates` and `needsReview` (an active deal whose client exists under a similar name without `hubspot_deal_id`: link it by hand). At most 10 clients are created per run; more creates none and reports an error. Push stays off (`HUBSPOT_PUSH_ENABLED=false`) |
-| embed | Approved 17 Nov 2026 together with vector search (`public.match_client_messages`). Credentials are masked before any text goes to the embedding model. Check that `OPENROUTER_EMBED_MODEL` returns 1536 dimensions |
+| embed        | Approved 17 Nov 2026 together with vector search (`public.match_client_messages`). Credentials are masked before any text goes to the embedding model. Check that `OPENROUTER_EMBED_MODEL` returns 1536 dimensions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 Team numbers: the settings row `team_whatsapp_numbers` (30 numbers on 17 Nov 2026: every connected Periskope phone
 plus current and former team members) together with `vas.whatsapp_number`. A new team phone must be added there,
 otherwise its replies count as client messages.
 
 ## Data access rule
+
 Until RLS policies for `authenticated` are approved (`supabase/proposals/rls-authenticated.sql`), the browser never
 reads Supabase. Every screen reads and writes through `lib/data/*` on the server with the service-role key, and every
 function scopes by the signed-in user (a Senior Accountant only gets clients where `clients.va_id` is theirs; "view
@@ -170,6 +179,7 @@ SQL waiting for approval lives in `supabase/proposals/`; SQL that was approved a
 `supabase/applied/`. Rollback exports with ids or phone numbers stay out of git (`.gitignore`).
 
 ## What is not done yet
+
 - **RLS for logged-in users is not applied** (`supabase/proposals/rls-authenticated.sql`). The anon lock-down is
   done (17 Nov 2026), so today access control lives in the server code described above.
 - No job has written yet (all dry runs); council is enabled for no client until the pilot. Microsoft sign-in end to

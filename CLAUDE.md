@@ -1,4 +1,4 @@
-# Shadow Accounting
+# Shadow Accountant
 
 Ops platform for AI Accountant's Virtual Accounting (VA) practice (about 88 Indian SMB clients).
 One timeline per client (WhatsApp, Drive, email, meetings, tickets), AI ticketing from WhatsApp,
@@ -11,6 +11,7 @@ treat it as history only. New specs are written here in `specs/` as we go.
 Build order and open decisions: `docs/ROADMAP.md`.
 
 ## Stack
+
 - Next.js + TypeScript on Vercel, Tailwind + shadcn/ui
 - Supabase project "Supabase VA" (single brain: every source writes there, UI and agents read from there)
 - Vercel AI SDK + OpenRouter (Claude) for agents
@@ -20,6 +21,7 @@ Build order and open decisions: `docs/ROADMAP.md`.
   Shadow owns the accountant, bucket, health and tickets. Pushing to HubSpot is off. Spec: `specs/hubspot-sync-v2.md`
 
 ## Hard rules (never break without explicit approval in chat)
+
 - No new tables, views or columns. Propose any schema change and wait for approval.
 - Never run migrations, DDL or data-changing SQL on production. Read-only queries are fine.
 - Service role key is server-only. Until RLS for logged-in users is approved (`supabase/proposals/rls-authenticated.sql`),
@@ -38,15 +40,18 @@ Build order and open decisions: `docs/ROADMAP.md`.
 - No new dependencies without saying why.
 
 ## Roles (least access)
+
 Senior Accountant: own clients only (`clients.va_id`). Admin: all clients and users. Engineer: all data + system.
 Role in `app_metadata.role`; accountant mapping is login email = `vas.email`.
 
 ## Writing conventions
+
 - Indian English. No em dashes in UI copy or docs.
 - Brand: white / black / grey `#666666`, accent `#314DD0` for the one primary action, Helvetica Neue.
 - Every AI answer about a client cites its source (message + time, SharePoint link, meeting + minute). If not found, say so.
 
 ## How we work (every non-trivial task)
+
 1. **Scope**: goal, constraints, success criteria. No code.
 2. **Explore**: read the relevant code, schema and workflows. Return a report. No code.
 3. **Plan**: steps with files, reason, risk and how each is verified. Wait for approval.
@@ -63,7 +68,9 @@ Extra for database work: inspect schema and dependent queries (n8n, va-bot, dash
 first; propose SQL with a rollback; never apply without approval.
 
 ## Commands
+
 Next.js 16 app at the repo root (`app/`, `components/`, `lib/`). Setup, env and jobs: `README.md`.
+
 - `npm run dev` (http://localhost:3000)
 - `npm run lint`
 - `npm run typecheck`
@@ -75,6 +82,7 @@ Auth routes: `/login`, `/auth/callback`, `/auth/sign-out`. Job routes: `/api/job
 Build contracts and per-agent notes: `docs/agents/`.
 
 ## Before saying a task is complete
+
 1. Run lint, typecheck, tests and build (whatever exists) and show the result.
 2. List changed files.
 3. State what was not verified and any remaining risk.
