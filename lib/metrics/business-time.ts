@@ -84,3 +84,23 @@ export function businessMinutesBetween(a: Date, b: Date, timezone: string): numb
   }
   return total / 60_000
 }
+
+/**
+ * The moment `minutes` business minutes after `start` (Mon to Sat 10:00 to 19:00 local), to the millisecond.
+ * Example: a message at 18:30 on Saturday with 60 minutes is due at 10:30 on Monday.
+ * Built on businessMinutesBetween (monotonic in its end), so both always agree.
+ */
+export function addBusinessMinutes(start: Date, minutes: number, timezone: string): Date {
+  if (!(minutes > 0)) return new Date(start.getTime())
+  let lo = start.getTime()
+  // Upper bound: grow by a week at a time (each week has 54 business hours).
+  let hi = lo + minutes * 60_000
+  for (let i = 0; i < 1000 && businessMinutesBetween(start, new Date(hi), timezone) < minutes; i++) hi += 7 * 86_400_000
+  // Binary search to the millisecond: hi is always a moment where at least `minutes` have passed.
+  while (hi - lo > 1) {
+    const mid = lo + Math.floor((hi - lo) / 2)
+    if (businessMinutesBetween(start, new Date(mid), timezone) >= minutes) hi = mid
+    else lo = mid
+  }
+  return new Date(hi)
+}

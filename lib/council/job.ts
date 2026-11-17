@@ -1,6 +1,8 @@
 import 'server-only'
 import type { JobResult } from '@/lib/jobs/guard'
 import { createAdminSupabase } from '@/lib/supabase/admin'
+import { maskCredentials } from '@/lib/ai/redact'
+import { addBusinessMinutes } from '@/lib/metrics/business-time'
 import { effectiveDirection, getTeamNumbers } from '@/lib/team'
 import type { Insert, Update } from '@/lib/db/types'
 import { combineVotes, validateVote } from './decide'
@@ -47,6 +49,12 @@ export type CouncilDeps = {
   vote?: VoteFn
   teamNumbers?: Set<string>
   now?: () => Date
+  /** IANA timezone for business hours (SLA). Default APP_TIMEZONE, else Asia/Kolkata. */
+  timezone?: string
+}
+
+function timezoneOf(deps: CouncilDeps): string {
+  return deps.timezone?.trim() || process.env.APP_TIMEZONE?.trim() || 'Asia/Kolkata'
 }
 
 type MessageOutcome = {
@@ -177,7 +185,7 @@ export async function runCouncilJob(
 
   // 3. Vote. Dry run without `vote`: list the candidates only (no model calls, no cost).
   if (!callModels) {
-    const sla = await markSlaBreaches(store, clientIds, false, now(), team, result)
+    const sla = await markSlaBreaches(store, clientIds, false, now(), team, result, timezoneOf(deps))
     result.details = {
       clients: clients.length,
       outcomes,
@@ -263,7 +271,7 @@ export async function runCouncilJob(
   }
 
   // 4. SLA marking always runs: the time budget above leaves room for it.
-  const sla = await markSlaBreaches(store, clientIds, o.write, now(), team, result)
+  const sla = await markSlaBreaches(store, clientIds, o.write, now(), team, result, timezoneOf(deps))
   result.details = { clients: clients.length, outcomes, skipped, sla, ...(stoppedEarly ? { stoppedEarly } : {}) }
   return result
 }
@@ -330,8 +338,8 @@ async function applyDecision(p: {
         last_message_at: m.message_timestamp,
         last_message_direction: direction,
         message_count: 1,
-        title: src.title.slice(0, 200) || null,
-        summary: src.summary,
+        title: maskCredentials(src.title).slice(0, 200) || null,
+        summary: maskCredentials(src.summary),
         tag: src.tag,
         fault: src.fault,
         client_tone: src.client_tone,
@@ -350,7 +358,7 @@ async function applyDecision(p: {
       conversationId = target!.id
       await store.updateConversation(conversationId, {
         ...touch(target!, m, direction, at),
-        ...(src.summary ? { summary: src.summary } : {}),
+        ...(src.summary ? { summary: maskCredentials(src.summary) } : {}),
       })
       break
     case 'close':
@@ -367,7 +375,7 @@ async function applyDecision(p: {
         ...touch(target!, m, direction, at),
         status: 'open',
         closed_at: null,
-        ...(src.summary ? { summary: src.summary } : {}),
+        ...(src.summary ? { summary: maskCredentials(src.summary) } : {}),
       })
       break
     case 'no_action':
@@ -420,23 +428,28 @@ async function markSlaBreaches(
   now: Date,
   team: Set<string>,
   result: JobResult,
+  timezone: string,
 ): Promise<{ slaMinutes: number; breached: string[]; answeredInTime: string[] }> {
   try {
     const slaMinutes = (await store.slaMinutes()) ?? DEFAULT_SLA_MINUTES
+    // Wall-clock prefilter (business minutes never exceed wall minutes), then the real test in business hours:
+    // the deadline is sla_minutes of Mon to Sat 10:00 to 19:00, so a 7 pm or Sunday message is not "late" overnight.
     const before = new Date(now.getTime() - slaMinutes * 60_000).toISOString()
     const candidates = await store.slaCandidates(clientIds, before)
     const breached: string[] = []
     const answeredInTime: string[] = []
-    for (let i = 0; i < candidates.length; i += 10) {
-      const part = candidates.slice(i, i + 10)
+    const due = candidates
+      .map((c) => ({ c, deadline: addBusinessMinutes(new Date(c.last_message_at), slaMinutes, timezone) }))
+      .filter((x) => x.deadline.getTime() <= now.getTime())
+    for (let i = 0; i < due.length; i += 10) {
+      const part = due.slice(i, i + 10)
       const replied = await Promise.all(
-        part.map(async (c) => {
-          const until = new Date(new Date(c.last_message_at).getTime() + slaMinutes * 60_000).toISOString()
-          const msgs = await store.messagesBetween(c.client_id, c.last_message_at, until)
+        part.map(async ({ c, deadline }) => {
+          const msgs = await store.messagesBetween(c.client_id, c.last_message_at, deadline.toISOString())
           return msgs.some((x) => effectiveDirection(x, team) === 'outgoing')
         }),
       )
-      part.forEach((c, j) => (replied[j] ? answeredInTime : breached).push(c.id))
+      part.forEach(({ c }, j) => (replied[j] ? answeredInTime : breached).push(c.id))
     }
     if (write && breached.length) await store.markSlaBreached(breached)
     return { slaMinutes, breached, answeredInTime }

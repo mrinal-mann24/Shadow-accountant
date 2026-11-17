@@ -1,6 +1,7 @@
 import 'server-only'
 import { tool } from 'ai'
 import { z } from 'zod'
+import { maskCredentials } from '@/lib/ai/redact'
 import type { AppUser } from '@/lib/auth/types'
 import { getClient, listConversations, listDocuments, listMeetings } from '@/lib/data'
 import type { ClientDetail, ConversationItem, DocumentItem, MeetingItem } from '@/lib/data/types'
@@ -154,7 +155,7 @@ export function createChatTools(ctx: Ctx) {
           at: h.message_timestamp,
           sender: h.sender_name,
           direction: effectiveDirection(h, team),
-          text: shorten(h.body, BODY_CHARS),
+          text: shorten(maskCredentials(h.body), BODY_CHARS),
         }
       })
       return { searched: q, items }
@@ -183,8 +184,8 @@ export function createChatTools(ctx: Ctx) {
         return {
           n: citation.n,
           citation,
-          title: t.title,
-          summary: shorten(t.summary, 400),
+          title: t.title ? maskCredentials(t.title) : null,
+          summary: shorten(maskCredentials(t.summary), 400),
           status: t.status,
           tag: t.tag,
           fault: t.fault,
@@ -271,7 +272,7 @@ export function createChatTools(ctx: Ctx) {
           organizer: m.organizerName,
           clientContact: m.pocName,
           hasTranscript: m.hasTranscript,
-          excerpt: transcriptExcerpt(transcripts.get(m.id) ?? null, query),
+          excerpt: maskCredentials(transcriptExcerpt(transcripts.get(m.id) ?? null, query)),
         }
       })
       return { items }

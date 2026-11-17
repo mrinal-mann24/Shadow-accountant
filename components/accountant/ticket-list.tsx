@@ -2,6 +2,8 @@
 import Link from 'next/link'
 import type { ConversationItem } from '@/lib/data/types'
 import { ticketAction } from '@/app/(app)/tickets/actions'
+import { draftReplyAction } from '@/app/(app)/tickets/draft-action'
+import { DraftReplyButton } from './draft-reply'
 import { formatAgo, formatDateTime, formatMinutes, ticketWaitMinutes } from './logic'
 import { TicketActions } from './ticket-actions'
 import { EmptyState, SlaBadge, StatusBadge, TagBadge } from './ui'
@@ -35,7 +37,7 @@ export function TicketList({
               )}
             </div>
             <div className="min-w-0">
-              <p className="font-medium break-words">{t.title ?? (t.summary.slice(0, 80) || 'Untitled ticket')}</p>
+              <p className="font-medium wrap-break-word">{t.title ?? (t.summary.slice(0, 80) || 'Untitled ticket')}</p>
               {t.summary && t.title && <p className="line-clamp-2 text-sm text-muted-foreground">{t.summary}</p>}
               <p className="mt-1 text-xs text-muted-foreground">
                 {showClient && t.clientName && (
@@ -51,7 +53,14 @@ export function TicketList({
                 {t.closedAt && <> · Closed {formatDateTime(t.closedAt)}</>}
               </p>
             </div>
-            <TicketActions id={t.id} status={t.status} tag={t.tag} action={ticketAction} readOnlyNote={readOnlyNote} />
+            <div className="flex flex-wrap items-center gap-2">
+              <DraftReplyButton
+                ticketId={t.id}
+                title={t.title ?? (t.summary.slice(0, 80) || 'Untitled ticket')}
+                action={draftReplyAction}
+              />
+              <TicketActions id={t.id} status={t.status} tag={t.tag} action={ticketAction} readOnlyNote={readOnlyNote} />
+            </div>
           </li>
         )
       })}

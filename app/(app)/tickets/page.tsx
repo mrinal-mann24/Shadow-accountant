@@ -12,6 +12,8 @@ import { listConversations } from '@/lib/data'
 
 export const metadata: Metadata = { title: 'Tickets' }
 export const dynamic = 'force-dynamic'
+// The Draft reply server action runs on this page: one AI call, 45 s timeout.
+export const maxDuration = 60
 
 type Params = { status?: string | string[]; tag?: string | string[]; q?: string | string[] }
 const STATUSES = { open: 'Open', closed: 'Closed', all: 'All' } as const

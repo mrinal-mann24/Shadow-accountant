@@ -142,6 +142,7 @@ describe('devLoginEmail', () => {
   })
   it('is never on in production', () => {
     expect(devLoginEmail({ NODE_ENV: 'production', DEV_LOGIN_EMAIL: 'dev@x.com' })).toBeNull()
+    expect(devLoginEmail({ NODE_ENV: 'development', DEV_LOGIN_EMAIL: 'dev@x.com', VERCEL_ENV: 'preview' })).toBeNull()
   })
   it('is off without an email', () => {
     expect(devLoginEmail({ NODE_ENV: 'development' })).toBeNull()

@@ -15,6 +15,8 @@ import { getClient, getScoreHistory, getTimeline, listConversations, listDocumen
 
 export const metadata: Metadata = { title: 'Client' }
 export const dynamic = 'force-dynamic'
+// The Draft reply server action runs on this page: one AI call, 45 s timeout.
+export const maxDuration = 60
 
 export default async function ClientPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser()
@@ -142,7 +144,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
               {profile.map(([label, value]) => (
                 <div key={label} className="contents">
                   <dt className="text-muted-foreground">{label}</dt>
-                  <dd className="break-words">{value || <span className="text-muted-foreground">Not set</span>}</dd>
+                  <dd className="wrap-break-word">{value || <span className="text-muted-foreground">Not set</span>}</dd>
                 </div>
               ))}
             </dl>
@@ -181,7 +183,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                   const href = safeHref(m.link)
                   return (
                     <li key={m.id} className="py-2 first:pt-0 last:pb-0">
-                      <p className="font-medium break-words">
+                      <p className="font-medium wrap-break-word">
                         {href ? (
                           <a href={href} target="_blank" rel="noopener noreferrer" className="hover:underline">
                             {m.subject ?? 'Meeting'}

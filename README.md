@@ -166,7 +166,7 @@ read only). Proposed SQL lives in `supabase/proposals/` and is never applied fro
   `supabase/proposals/rls-authenticated.sql` only means something after they are limited to anon or dropped.
 - Nothing has been run against live Supabase, OpenRouter or HubSpot, and no screen has been opened in a browser
   against real data. Microsoft sign-in end to end is unverified.
-- No Vercel project, no CI workflow and no git commit have been made.
+- No Vercel project and no CI workflow yet. Code is committed on `master` (local).
 - Proposals waiting for approval: `client-bucket.sql` (bucket column; the bucket switch stays disabled and
   `va_bucket` is not pushed), `match-client-messages.sql` (vector search; `VECTOR_SEARCH_APPROVED` stays false),
   `rls-authenticated.sql`.

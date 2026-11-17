@@ -12,6 +12,8 @@ import { listClients, listConversations, listRecentActivity } from '@/lib/data'
 
 export const metadata: Metadata = { title: 'Home' }
 export const dynamic = 'force-dynamic'
+// The Draft reply server action runs on this page: one AI call, 45 s timeout.
+export const maxDuration = 60
 
 export default async function HomePage() {
   const user = await requireUser()

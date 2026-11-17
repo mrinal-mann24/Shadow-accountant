@@ -125,8 +125,9 @@ export function isPublicPath(pathname: string): boolean {
  * DEV LOGIN (local development only). Enabled only when NODE_ENV is not 'production' AND
  * DEV_LOGIN_EMAIL is set. Never enabled in production, whatever else is set.
  */
-export function devLoginEmail(env: { NODE_ENV?: string; DEV_LOGIN_EMAIL?: string }): string | null {
-  if (env.NODE_ENV === 'production') return null
+export function devLoginEmail(env: { NODE_ENV?: string; DEV_LOGIN_EMAIL?: string; VERCEL_ENV?: string }): string | null {
+  // Never on a server build or on any Vercel deployment (production, preview or development).
+  if (env.NODE_ENV === 'production' || env.VERCEL_ENV?.trim()) return null
   const email = env.DEV_LOGIN_EMAIL?.trim()
   return email ? email : null
 }

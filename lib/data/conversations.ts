@@ -8,7 +8,7 @@ import { chunk, fetchAll } from './paginate'
 import { assertCanMutate, canAccessClient, isInvalidInput, scopedClientIds, scopeOf, type Db } from './scope'
 import type { ConversationItem, ConversationPatch } from './types'
 
-const CONV_COLS =
+export const CONV_COLS =
   'id, client_id, va_id, title, summary, status, tag, fault, client_tone, va_tone, sla_breached, opened_at, opened_by, closed_at, last_message_at, last_message_direction, message_count'
 
 type ConvRow = Pick<
