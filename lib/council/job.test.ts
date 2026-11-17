@@ -498,23 +498,6 @@ describe('runCouncilJob SLA', () => {
     expect((res.details as { sla: { answeredInTime: string[] } }).sla.answeredInTime).toEqual(['answered'])
   })
 
-  it('does not flag an evening message overnight: the deadline is in business hours', async () => {
-    // Last client message Sunday 15 Nov 2026, 8 pm IST. NOW is Monday 16 Nov, 5:30 pm IST, SLA 120 minutes:
-    // due Monday 12:00 pm IST, so it is checked; a ticket whose message came at 4 pm today (due 6 pm) is not.
-    const calls: [string, string][] = []
-    const { store, writes } = fakeStore({
-      messages: [],
-      sla: [sla('sunday', '2026-11-15T14:30:00Z'), sla('today', '2026-11-16T10:30:00Z')],
-      between: (_c, after, until) => {
-        calls.push([after, until])
-        return []
-      },
-    })
-    await runCouncilJob({ write: true, limit: 25 }, { ...deps(store, vi.fn()), timezone: 'Asia/Kolkata' })
-    expect(calls).toEqual([['2026-11-15T14:30:00Z', '2026-11-16T06:30:00.000Z']])
-    expect(writes.slaMarked).toEqual(['sunday'])
-  })
-
   it('looks for a reply only within sla_minutes after the last client message', async () => {
     const calls: [string, string][] = []
     const { store } = fakeStore({

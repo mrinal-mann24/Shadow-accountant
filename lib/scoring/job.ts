@@ -97,7 +97,7 @@ export async function runHealthScoreJob(o: { write: boolean; now: Date; clientId
     try {
       const msgs = await loadClientMessagesForMetrics(client.client_id, windowDays)
       const metrics = computeClientMetrics(msgs, { now, timezone })
-      const events = [...messageEvents(msgs, { now, slaMinutes, timezone }), ...ticketEvents(convsByClient.get(client.client_id) ?? [])]
+      const events = [...messageEvents(msgs, { now, slaMinutes }), ...ticketEvents(convsByClient.get(client.client_id) ?? [])]
       const prev = pickPrev(existing.get(client.client_id), now, timezone)
       const r = computeHealthScore({ metrics, events, weights, now, prev })
       const lastAt = msgs.reduce<Date | null>((max, m) => (!max || m.at > max ? m.at : max), null)

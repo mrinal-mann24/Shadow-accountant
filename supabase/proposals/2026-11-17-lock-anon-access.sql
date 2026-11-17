@@ -1,4 +1,7 @@
--- Proposal (NOT applied). Critical 1 from the pre-pilot review, 17 Nov 2026.
+-- APPLIED on 17 Nov 2026 (user approved in chat: "APlly the Critial 1"). Critical 1 from the pre-pilot review.
+-- Verified after applying: 0 anon policies left, RLS on for client_contacts and addition_charges; as the anon role the
+-- meeting picker returns 30 rows and clients, vas, client_messages, client_contacts and conversations return 0 rows.
+-- Do not run the block below again (it is safe to re-run, but there is nothing left to change). Rollback at the end.
 --
 -- Problem (checked live, read-only):
 --   * The public "anon" key has full table grants (select, insert, update, delete, truncate) on every table below.
@@ -33,7 +36,11 @@ drop policy if exists "anon read council_verdicts" on public.council_verdicts;
 
 -- 3. Keep the meeting picker working without opening clients: the view runs as its owner and anon may only read it.
 alter view public.clients_meeting_picker set (security_invoker = off);
-revoke all on public.clients_meeting_picker from anon;
+-- The view now runs as its owner (postgres, bypasses RLS), so take it away from signed-in users and PUBLIC too:
+-- only the anon meeting picker may read it. Supabase's security advisor will list it as a security-definer view;
+-- that is deliberate (it exposes only client_id, client_name and email of active clients). Better later: serve the
+-- picker from a server route and drop anon access completely.
+revoke all on public.clients_meeting_picker from anon, authenticated, public;
 grant select on public.clients_meeting_picker to anon;
 
 commit;
@@ -54,5 +61,5 @@ commit;
 -- create policy "anon read client_score_history" on public.client_score_history for select to anon using (true);
 -- create policy "anon read council_verdicts" on public.council_verdicts for select to anon using (true);
 -- alter view public.clients_meeting_picker set (security_invoker = on);
--- grant all on public.clients_meeting_picker to anon;
+-- grant all on public.clients_meeting_picker to anon, authenticated;
 -- commit;

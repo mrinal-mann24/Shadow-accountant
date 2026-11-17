@@ -24,7 +24,6 @@
 // prev / delta: prev comes from the existing client_scores row (see pickPrev), delta = score - prev.
 // top_reasons: up to 3 short reasons for the biggest negative contributors, grouped by kind.
 import type { ClientMetrics, MetricMessage } from '@/lib/metrics'
-import { businessMinutesBetween } from '@/lib/metrics/business-time'
 
 export const DEFAULT_WEIGHTS: Record<string, number> = {
   window_days: 30,
@@ -241,13 +240,9 @@ export function computeHealthScore(input: {
  * A "run" is one or more incoming messages after our last outgoing message. The first outgoing message
  * after a run ends it: lag = that reply time - first incoming time of the run (wall-clock minutes).
  * Outgoing messages with no run before them are proactive and add nothing.
- * A run still open at `now` is unanswered once slaMinutes have passed since its first message: business minutes
- * (Mon to Sat 10:00 to 19:00) when `timezone` is given, so an evening or Sunday message is not unanswered overnight.
+ * A run still open at `now` is unanswered once its first message is older than slaMinutes (clock time, 24x7).
  */
-export function messageEvents(
-  msgs: MetricMessage[],
-  opts: { now: Date; slaMinutes: number; timezone?: string },
-): ScoreEvent[] {
+export function messageEvents(msgs: MetricMessage[], opts: { now: Date; slaMinutes: number }): ScoreEvent[] {
   const nowMs = opts.now.getTime()
   const sorted = msgs.filter((m) => m.at.getTime() <= nowMs).sort((a, b) => a.at.getTime() - b.at.getTime())
   const events: ScoreEvent[] = []
@@ -260,9 +255,7 @@ export function messageEvents(
       runStart = null
     }
   }
-  const waited = (start: Date) =>
-    opts.timezone ? businessMinutesBetween(start, opts.now, opts.timezone) : (nowMs - start.getTime()) / 60_000
-  if (runStart && waited(runStart) >= opts.slaMinutes) {
+  if (runStart && nowMs - runStart.getTime() >= opts.slaMinutes * 60_000) {
     events.push({ kind: 'unanswered', at: runStart })
   }
   return events

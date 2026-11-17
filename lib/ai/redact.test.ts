@@ -28,6 +28,35 @@ describe('maskCredentials', () => {
     expect(maskCredentials('Card 4111 1111 1111 1111 exp 12/29')).toBe(`Card ${HIDDEN} exp 12/29`)
     expect(maskCredentials('Invoice 123456789012 raised')).toBe('Invoice 123456789012 raised')
   })
+  it('covers the formats found in review', () => {
+    expect(maskCredentials('Password: "Ab,c@1"')).toBe(`Password: "${HIDDEN}"`)
+    expect(maskCredentials("password is 'abc@1'")).toBe(`password is '${HIDDEN}'`)
+    expect(maskCredentials('password is Abc,123;x ok')).toBe(`password is ${HIDDEN} ok`)
+    expect(maskCredentials('pass: hello12')).toBe(`pass: ${HIDDEN}`)
+    expect(maskCredentials('pswd Rahul@9')).toBe(`pswd ${HIDDEN}`)
+    expect(maskCredentials('net banking id ravi123')).toBe(`net banking id ${HIDDEN}`)
+    expect(maskCredentials('customer id 88776655')).toBe(`customer id ${HIDDEN}`)
+    expect(maskCredentials('pin number 1234')).toBe(`pin number ${HIDDEN}`)
+    expect(maskCredentials('OTP code 1234')).toBe(`OTP code ${HIDDEN}`)
+    expect(maskCredentials('login id: ram')).toBe(`login id: ${HIDDEN}`)
+    expect(maskCredentials('mera password Abc@1 hai')).toBe(`mera password ${HIDDEN} hai`)
+    expect(maskCredentials('पासवर्ड Abc@1')).toBe(`पासवर्ड ${HIDDEN}`)
+  })
+  it('keeps accounting numbers that only sit near bank or credit words', () => {
+    for (const t of [
+      'ITC credit challan 9876543210 paid',
+      'bank 01-04-2025 30-04-2025 statement',
+      'credit note 2026110012345 issued',
+      'Please pass the entry for 14000',
+    ]) expect(maskCredentials(t)).toBe(t)
+    expect(maskCredentials('account no. 1234567890 HDFC')).toBe(`account no. ${HIDDEN} HDFC`)
+  })
+  it('is fast on very long input', () => {
+    const started = Date.now()
+    maskCredentials(`otp${' '.repeat(65_000)}x`)
+    maskCredentials('password '.repeat(5_000))
+    expect(Date.now() - started).toBeLessThan(500)
+  })
   it('handles empty input', () => {
     expect(maskCredentials(null)).toBe('')
     expect(maskCredentials('')).toBe('')

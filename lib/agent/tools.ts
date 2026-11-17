@@ -272,7 +272,8 @@ export function createChatTools(ctx: Ctx) {
           organizer: m.organizerName,
           clientContact: m.pocName,
           hasTranscript: m.hasTranscript,
-          excerpt: maskCredentials(transcriptExcerpt(transcripts.get(m.id) ?? null, query)),
+          // Mask the whole transcript first, so the excerpt cut can never leave part of a value visible.
+          excerpt: transcriptExcerpt(maskCredentials(transcripts.get(m.id) ?? null) || null, query),
         }
       })
       return { items }
