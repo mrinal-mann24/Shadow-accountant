@@ -11,5 +11,5 @@ next-env.d.ts
 *.tsbuildinfo
 
 # Rollback exports and applied-change records hold message ids and client phone numbers: keep them out of git.
-supabase/proposals/*.csv
-supabase/proposals/*APPLIED-rollback.sql
+supabase/**/*.csv
+supabase/**/*APPLIED-rollback.sql

@@ -10,7 +10,7 @@ Status: DONE. `npm run typecheck` clean, `npm run lint` clean, `npm run test` 19
   `app/auth/sign-out/route.ts` (POST only; also clears view-as and dev login cookies).
 - `app/(auth)/no-access/page.tsx`: "Your account is not set up yet, ask an Admin" for signed-in users with no role
   and no `vas` email match.
-- `middleware.ts`: @supabase/ssr session refresh, redirects signed-out users to `/login?next=...`; `/api/*` gets 401 JSON
+- `proxy.ts (was middleware.ts)`: @supabase/ssr session refresh, redirects signed-out users to `/login?next=...`; `/api/*` gets 401 JSON
   instead. Public: `/login`, `/auth/*`, `/api/jobs/*`, `/api/webhooks/*` (jobs and webhooks skip Supabase entirely).
 - `lib/auth/types.ts`, `lib/auth/roles.ts` (pure rules), `lib/auth/cookies.ts`, `lib/auth/session.ts`,
   `lib/auth/view-as.ts` (server actions), `lib/auth/users.ts` (admin user management).
@@ -71,7 +71,7 @@ setUserRole(admin: AppUser, userId: string, role: Role | null): Promise<void>  /
   then shows a "Dev login as ..." button that sets an httpOnly `dev_login=1` cookie; middleware and session honour it
   only under the same condition. Identity id is `dev-login:<email>` (not a uuid; do not write it to uuid columns).
   Role from optional `DEV_LOGIN_ROLE`, else the vas email rule.
-- Kept `middleware.ts` (contract name). Next 16 marks it deprecated in favour of `proxy.ts`; it still works.
+- Kept `proxy.ts (was middleware.ts)` (contract name). Next 16 marks it deprecated in favour of `proxy.ts`; it still works.
 - `(app)/layout.tsx` gates every page (anonymous to /login, not set up to /no-access). Pages still call
   `requireUser(roles)` for role checks.
 - RLS proposal uses inline JWT checks, no new SQL functions.

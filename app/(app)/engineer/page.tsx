@@ -22,7 +22,7 @@ const USAGE_WINDOW_DAYS = 30
 
 function settled<T>(r: PromiseSettledResult<T>, label: string): T | null {
   if (r.status === 'fulfilled') return r.value
-  console.error(`[engineer] ${label} failed`, r.reason)
+  console.error(`[engineer] ${label} failed: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`)
   return null
 }
 

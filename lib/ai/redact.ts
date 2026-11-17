@@ -81,6 +81,11 @@ export function maskCredentials(text: string | null | undefined): string {
   return out.replace(ACCOUNT_NUMBER, (_all, lead: string) => `${lead}${HIDDEN}`)
 }
 
+/** maskCredentials for optional fields: null and undefined stay as they are. */
+export function maskNullable<T extends string | null | undefined>(text: T): T {
+  return (text == null ? text : maskCredentials(text)) as T
+}
+
 /** True when masking would change the text, i.e. it carries a credential value. */
 export function hasCredential(text: string | null | undefined): boolean {
   return !!text && maskCredentials(text) !== text

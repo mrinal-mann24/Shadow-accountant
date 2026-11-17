@@ -53,7 +53,8 @@ Names only live in `.env.example`; never commit values. Set the same names in Ve
 | `HUBSPOT_IGNORE_DEAL_IDS` | HubSpot sync | Deals never treated as clients (test deals) |
 | `HUBSPOT_PUSH_ENABLED` | HubSpot sync | `true` pushes the `va_*` deal properties. Keep `false` until those properties exist in HubSpot |
 | `DEV_LOGIN_EMAIL`, `DEV_LOGIN_ROLE` | local only | Leave blank in Vercel |
-| `APP_TIMEZONE` | scoring, chat, business hours | Default `Asia/Kolkata` |
+| `APP_TIMEZONE` | scoring, chat, Draft reply, the "first reply in business hours" metric | Default `Asia/Kolkata`. The SLA itself is clock time, 24x7 |
+| `NEXT_PUBLIC_SITE_URL` | Microsoft sign-in | The deployed app's URL, used for the sign-in redirect instead of request headers. Blank locally |
 
 ## Supabase Auth: Microsoft (Azure) sign-in
 Done once, in the dashboards, by someone with access. Nothing in this repo changes Supabase settings.
@@ -79,8 +80,8 @@ Done once, in the dashboards, by someone with access. Nothing in this repo chang
    shared with other tools, so in the Supabase dashboard turn off email sign-ups (and any other provider) or at
    least keep auto-confirm off. Check after the first Microsoft sign-in that the user shows a confirmed email: if
    Supabase marks Azure emails as unconfirmed, add the optional `xms_edov` claim (email domain verified) to the
-   Azure app's token configuration. The `vas.email` mapping decides whose clients an accountant sees, so the
-   Stage 1 lock-down must remove anon write access on `vas`.
+   Azure app's token configuration. The `vas.email` mapping decides whose clients an accountant sees; the anon key
+   can no longer read or write `vas` or any client data (applied 17 Nov 2026, `supabase/applied/2026-11-17-lock-anon-access.sql`).
 
 Routes: `/login`, `/auth/callback` (code exchange), `/auth/sign-out` (POST).
 
@@ -149,30 +150,36 @@ blank `JOBS_WRITE_ONLY` means no job writes.
 | health-score | Read-only check that `client_score_history` has a unique constraint on `(client_id, score_date)`. Dry run on a few clients, compare with an accountant's ranking, and get the formula signed off (ROADMAP stage 5) |
 | council | Confirm the old council is switched off, confirm `settings.sla_minutes`, run `council-eval.ts --offline` and `--limit 50`, and agree the agreement bar (ROADMAP stage 6) |
 | hubspot-sync | Private app scopes `crm.objects.deals.read`, `crm.schemas.deals.read` and `crm.objects.owners.read` (add `crm.objects.deals.write` only if push is approved later). Webhook subscriptions `deal.creation` and `deal.propertyChange` for `dealstage` and `amount_paid`, to `https://<host>/api/webhooks/hubspot`. Every run reconciles all paid deals in the VA pipeline (about 65), so a missed webhook heals on the next run. Review a dry run's `details.pull`: `counts`, `updates` (stage label, `amount_paid`, Active / Inactive), `creates` and `needsReview` (an active deal whose client exists under a similar name without `hubspot_deal_id`: link it by hand). At most 10 clients are created per run; more creates none and reports an error. Push stays off (`HUBSPOT_PUSH_ENABLED=false`) |
-| embed | Explicit approval: it writes `client_messages.embedding`, and `CLAUDE.md` says this repo only writes the council's columns there. Check that `OPENROUTER_EMBED_MODEL` returns 1536 dimensions |
+| embed | Approved 17 Nov 2026 together with vector search (`public.match_client_messages`). Credentials are masked before any text goes to the embedding model. Check that `OPENROUTER_EMBED_MODEL` returns 1536 dimensions |
 
-Data that a human needs to add (with approval): the settings row `team_whatsapp_numbers` (comma list of about 22
-team numbers). Until it exists only `vas.whatsapp_number` counts as a team number, so most team replies still show
-as incoming and scores and SLA are off.
+Team numbers: the settings row `team_whatsapp_numbers` (30 numbers on 17 Nov 2026: every connected Periskope phone
+plus current and former team members) together with `vas.whatsapp_number`. A new team phone must be added there,
+otherwise its replies count as client messages.
 
 ## Data access rule
-Until RLS policies for `authenticated` are approved (ROADMAP stages 1 and 2), the browser never reads Supabase
-data. Every read and write goes through `lib/data/*` on the server with the service-role key, and every function
-scopes by the signed-in user (a Senior Accountant only gets clients where `clients.va_id` is theirs; "view as" is
-read only). Proposed SQL lives in `supabase/proposals/` and is never applied from this repo.
+Until RLS policies for `authenticated` are approved (`supabase/proposals/rls-authenticated.sql`), the browser never
+reads Supabase. Every screen reads and writes through `lib/data/*` on the server with the service-role key, and every
+function scopes by the signed-in user (a Senior Accountant only gets clients where `clients.va_id` is theirs; "view
+as" is read only). Jobs and agents have their own server-only stores (`lib/council/store.ts`, `lib/agent/store.ts`,
+`lib/scoring/job.ts`, `lib/hubspot/sync.ts`, `lib/metrics/load.ts`, `lib/team`): the chat agent scopes every query to
+the user's client ids; jobs run without a user and are protected by `CRON_SECRET`. The anon key can read nothing
+except the view `clients_meeting_picker`.
+Credential values (OTPs, passwords, login ids, account and card numbers) are masked by `lib/ai/redact.ts` in every
+mapper that feeds a screen and in everything sent to a model.
+SQL waiting for approval lives in `supabase/proposals/`; SQL that was approved and applied (with its rollback) lives in
+`supabase/applied/`. Rollback exports with ids or phone numbers stay out of git (`.gitignore`).
 
 ## What is not done yet
-- **Security lock-down (ROADMAP stage 1) is skipped for now.** The `using (true)` anon policies still exist;
-  `supabase/proposals/rls-authenticated.sql` only means something after they are limited to anon or dropped.
-- Nothing has been run against live Supabase, OpenRouter or HubSpot, and no screen has been opened in a browser
-  against real data. Microsoft sign-in end to end is unverified.
+- **RLS for logged-in users is not applied** (`supabase/proposals/rls-authenticated.sql`). The anon lock-down is
+  done (17 Nov 2026), so today access control lives in the server code described above.
+- No job has written yet (all dry runs); council is enabled for no client until the pilot. Microsoft sign-in end to
+  end is unverified, and no screen has been opened by an accountant against real data.
 - No Vercel project and no CI workflow yet. Code is committed on `master` (local).
 - Proposals waiting for approval: `client-bucket.sql` (bucket column; the bucket switch stays disabled and
-  `va_bucket` is not pushed), `match-client-messages.sql` (vector search; `VECTOR_SEARCH_APPROVED` stays false),
-  `rls-authenticated.sql`.
+  `va_bucket` is not pushed) and `rls-authenticated.sql`.
 - Bucket list (YTRO, DC, DS) awaits leadership confirmation.
 - Files have no SharePoint links (`document_uploads` has no URL column). Meetings are not linked to clients yet.
-- AI cost is not tracked (no token counts stored); no per-user chat rate limit.
-- Public holidays are not excluded from business hours. Chat search is by recency, not relevance.
-- `middleware.ts` uses the file name Next 16 marks as deprecated (`proxy.ts` is the new name); it still works.
+- AI cost is not tracked (no token counts stored); no per-user rate limit on Ask AI or Draft reply.
+- Public holidays are not excluded from the "first reply in business hours" metric.
+- Ask AI search is full text until the embed job has written embeddings; then vector search adds relevance.
 - `npm audit` reports 7 moderate findings in dev-only lint tooling (via eslint-config-next).

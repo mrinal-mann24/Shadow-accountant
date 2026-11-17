@@ -106,10 +106,18 @@ export function assertNotViewingAs(u: AppUser): void {
 /** Only allow same-site relative paths after login, never `//host` or absolute URLs. */
 export function safeNextPath(next: string | null | undefined, fallback = '/home'): string {
   if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\')) return fallback
+  // Browsers drop tabs and newlines inside a URL, so "/\t/evil.com" becomes "//evil.com" (another site).
+  // Refuse control characters and backslashes, then check the path still resolves to this site.
+  if (/[\u0000-\u001f\u007f\\]/.test(next)) return fallback
+  try {
+    if (new URL(next, 'http://shadow.local').host !== 'shadow.local') return fallback
+  } catch {
+    return fallback
+  }
   return next
 }
 
-/** Paths reachable without a session (middleware). Job and webhook routes do their own auth. */
+/** Paths reachable without a session (proxy.ts). Job and webhook routes do their own auth. */
 export function isPublicPath(pathname: string): boolean {
   return (
     pathname === '/login' ||

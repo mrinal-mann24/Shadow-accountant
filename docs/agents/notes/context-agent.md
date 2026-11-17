@@ -22,7 +22,7 @@ from the repo root: `npm run typecheck` clean, `npm run lint` clean, `npm run te
 - `app/(app)/ask/page.tsx` + `components/chat/*` (`chat-panel.tsx`, `chat-message.tsx`, `citation-chip.tsx`,
   `chat-utils.ts`): streaming chat, client picker defaulting to `?client=`, citation chips that open a dialog with the
   source (time, label, message text / ticket summary / transcript excerpt / folder) and "Open in client page".
-- `supabase/proposals/match-client-messages.sql` (NOT applied): read-only `match_client_messages` function for vector search.
+- `supabase/applied/match-client-messages.sql` (APPLIED 17 Nov 2026): read-only `match_client_messages` function for vector search.
 - Tests: `lib/agent/{citations,scope,prompt,tools,embed}.test.ts`, `components/chat/chat-utils.test.ts`.
 
 ## Exports (exact import paths + signatures)
@@ -89,7 +89,7 @@ HTTP:
 - human / leadership (approval needed): the embed job WRITES `client_messages.embedding`. CLAUDE.md says this repo only
   writes the council's `conversation_id` / `processed_at` there, so enabling writes for this job needs explicit approval
   (ROADMAP stage 11 plans it). Dry run is safe.
-- human (approval needed): `supabase/proposals/match-client-messages.sql` (one read-only SQL function, rollback
+- done 17 Nov 2026 (was approval needed): `supabase/applied/match-client-messages.sql` (one read-only SQL function, rollback
   included). After applying, flip `VECTOR_SEARCH_APPROVED` in `lib/agent/store.ts`.
 - accountant-ui: citation links point at `/clients/<id>#message-<messageId>`, `#file-<uploadId>`, `#meeting-<id>`,
   `#ticket-<conversationId>`. Please add matching `id` attributes on timeline / files / meetings / ticket rows so the

@@ -45,6 +45,15 @@ export function serverEnv(): ServerEnv {
 
 export type PublicEnv = { NEXT_PUBLIC_SUPABASE_URL: string; NEXT_PUBLIC_SUPABASE_ANON_KEY: string }
 
+/** App timezone (IANA). Same default as serverEnv().APP_TIMEZONE, without validating the whole env. */
+export function appTimezone(): string {
+  return process.env.APP_TIMEZONE?.trim() || 'Asia/Kolkata'
+}
+
+// Deliberate direct process.env reads elsewhere (each fails closed when unset): CRON_SECRET, JOBS_WRITE_* (lib/jobs/guard.ts),
+// HUBSPOT_WEBHOOK_SECRET (app/api/webhooks/hubspot), HUBSPOT_PUSH_ENABLED (lib/hubspot/sync.ts), DEV_LOGIN_* (lib/auth),
+// NEXT_PUBLIC_SITE_URL (login). They are read at call time so a missing value never breaks the build.
+
 /** Public (browser-safe) env. Literal process.env access so Next inlines the values in client bundles. */
 export function publicEnv(): PublicEnv {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL

@@ -6,6 +6,7 @@ import type { AppUser } from '@/lib/auth/types'
 import { ForbiddenError } from '@/lib/auth/roles'
 import { formatCitationDate } from '@/lib/agent/citations'
 import { getModel } from '@/lib/ai/openrouter'
+import { appTimezone } from '@/lib/env'
 import { getReplyContext, type ReplyContext } from '@/lib/data/reply-context'
 import { checkDraft } from './guard'
 import { buildReplyItems, buildReplyPrompt, REPLY_SYSTEM_PROMPT } from './prompt'
@@ -57,7 +58,7 @@ export async function draftReply(user: AppUser, ticketId: string, deps: Partial<
     getContext: getReplyContext,
     generate: defaultGenerate,
     now: () => new Date(),
-    timeZone: process.env.APP_TIMEZONE?.trim() || 'Asia/Kolkata',
+    timeZone: appTimezone(),
     ...deps,
   }
   try {

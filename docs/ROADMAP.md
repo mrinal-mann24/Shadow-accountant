@@ -19,6 +19,9 @@ The app, the ticket council, the health score, metrics, HubSpot sync and the AI 
   incoming. `vas` has only 4 people; about 22 team numbers exist. Scoring is wrong until this is fixed.
 - 912 old messages have no direction. Media is almost always typed as `chat`.
 - Council is enabled for 1 client; about 775 messages ever processed. 0 messages embedded.
+- Update 17 Nov 2026: council is enabled for no client (old council data for Ayurpet reset); 5 pilot clients will be
+  enabled at launch. Vector search is applied (`supabase/applied/match-client-messages.sql`); 0 messages embedded
+  until the embed job writes. The anon key is locked out of all client data (stage 1 lock-down done).
 - 89 clients, 72 with a WhatsApp group, 75 linked to an accountant (`va_id`).
 
 ## Stages

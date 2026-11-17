@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildCouncilPrompt, COUNCIL_SYSTEM_PROMPT, sanitiseBody } from './prompt'
+import { sanitiseBody } from '@/lib/ai/sanitise'
+import { buildCouncilPrompt, COUNCIL_SYSTEM_PROMPT } from './prompt'
 import type { CouncilContext } from './types'
 
 const ctx: CouncilContext = {

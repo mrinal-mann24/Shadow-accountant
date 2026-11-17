@@ -22,7 +22,7 @@ export async function createServerSupabase(): Promise<SupabaseClient<Database>> 
         try {
           for (const { name, value, options } of cookiesToSet) cookieStore.set(name, value, options)
         } catch {
-          // Called from a Server Component, where cookies are read-only. middleware.ts refreshes the session.
+          // Called from a Server Component, where cookies are read-only. proxy.ts refreshes the session.
         }
       },
     },

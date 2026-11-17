@@ -2,6 +2,7 @@ import 'server-only'
 import type { JobResult } from '@/lib/jobs/guard'
 import { createAdminSupabase } from '@/lib/supabase/admin'
 import { maskCredentials } from '@/lib/ai/redact'
+import { DEFAULT_SLA_MINUTES } from '@/lib/scoring'
 import { effectiveDirection, getTeamNumbers } from '@/lib/team'
 import type { Insert, Update } from '@/lib/db/types'
 import { combineVotes, validateVote } from './decide'
@@ -20,8 +21,6 @@ import { askModel, withOneRetry, type ModelVote, type VoteFn } from './vote'
 
 export const RECENT_MESSAGES = 15
 export const CLOSED_WINDOW_DAYS = 7
-/** Used when settings 'sla_minutes' is missing. Same default as lib/scoring. */
-export const DEFAULT_SLA_MINUTES = 60
 export const OPENED_BY = 'council'
 const DEFAULT_MAX_ATTEMPTS = 3
 export const DEFAULT_LIMIT = 25

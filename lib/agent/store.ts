@@ -1,4 +1,5 @@
 import 'server-only'
+import { chunk } from '@/lib/data/paginate'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminSupabase } from '@/lib/supabase/admin'
 
@@ -31,27 +32,14 @@ export interface AgentStore {
   searchMessagesText(query: string, clientIds: string[] | null, limit: number): Promise<MessageHit[]>
   /** Messages in scope that have an embedding. */
   countEmbedded(clientIds: string[] | null): Promise<number>
-  /** Nearest messages by embedding (needs the proposed SQL function; see VECTOR_SEARCH_APPROVED). */
+  /** Nearest messages by embedding (public.match_client_messages, service role only). */
   searchMessagesVector(embedding: number[], clientIds: string[] | null, limit: number): Promise<MessageHit[]>
   /** Meetings of one client with transcript text, newest first. */
   meetingsWithTranscript(clientId: string, limit: number): Promise<MeetingWithTranscript[]>
 }
 
-/**
- * Vector search needs the SQL function in supabase/proposals/match-client-messages.sql, which is NOT applied.
- * Flip to true only after it is approved and applied. Until then search is full text only.
- */
-// Approved 17 Nov 2026; public.match_client_messages applied (supabase/proposals/match-client-messages.sql).
-export const VECTOR_SEARCH_APPROVED = true
 
 const HIT_COLS = 'message_id, client_id, message_timestamp, body, sender_name, sender_phone, direction'
-const IN_CHUNK = 150
-
-function chunks<T>(xs: T[], size: number): T[][] {
-  const out: T[][] = []
-  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size))
-  return out
-}
 
 function newestFirst(rows: MessageHit[], limit: number): MessageHit[] {
   return [...rows].sort((a, b) => (a.message_timestamp < b.message_timestamp ? 1 : -1)).slice(0, limit)
@@ -74,7 +62,7 @@ export const supabaseAgentStore: AgentStore = {
     if (clientIds === null) return run(null)
     if (clientIds.length === 0) return []
     const all: MessageHit[] = []
-    for (const part of chunks(clientIds, IN_CHUNK)) all.push(...(await run(part)))
+    for (const part of chunk(clientIds)) all.push(...(await run(part)))
     return newestFirst(all, limit)
   },
 
@@ -82,7 +70,7 @@ export const supabaseAgentStore: AgentStore = {
     if (clientIds && clientIds.length === 0) return 0
     const db = createAdminSupabase()
     let total = 0
-    for (const part of clientIds ? chunks(clientIds, IN_CHUNK) : [null]) {
+    for (const part of clientIds ? chunk(clientIds) : [null]) {
       let q = db.from('client_messages').select('message_id', { count: 'exact', head: true }).not('embedding', 'is', null)
       if (part) q = q.in('client_id', part)
       const { count, error } = await q
@@ -94,8 +82,7 @@ export const supabaseAgentStore: AgentStore = {
   },
 
   async searchMessagesVector(embedding, clientIds, limit) {
-    if (!VECTOR_SEARCH_APPROVED) return []
-    // The function is not in the generated types until it is applied, so call it untyped.
+    // public.match_client_messages (supabase/applied/match-client-messages.sql) is not in the generated types.
     const db = createAdminSupabase() as unknown as SupabaseClient
     const { data, error } = await db.rpc('match_client_messages', {
       query_embedding: `[${embedding.join(',')}]`,

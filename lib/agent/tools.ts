@@ -1,7 +1,7 @@
 import 'server-only'
 import { tool } from 'ai'
 import { z } from 'zod'
-import { maskCredentials } from '@/lib/ai/redact'
+import { maskCredentials, maskNullable } from '@/lib/ai/redact'
 import type { AppUser } from '@/lib/auth/types'
 import { getClient, listConversations, listDocuments, listMeetings } from '@/lib/data'
 import type { ClientDetail, ConversationItem, DocumentItem, MeetingItem } from '@/lib/data/types'
@@ -18,7 +18,7 @@ import {
 } from './citations'
 import { embedModelId, embedTexts } from './models'
 import { searchClientIds, toolClientId, type ChatScope } from './scope'
-import { supabaseAgentStore, VECTOR_SEARCH_APPROVED, type AgentStore, type MessageHit } from './store'
+import { supabaseAgentStore, type AgentStore, type MessageHit } from './store'
 
 // Read-only tools for the client chat. Every tool is scoped twice: by the chat scope (the user's own client
 // list, see lib/agent/scope.ts) and by lib/data, which checks the AppUser again. Every result item carries a
@@ -124,15 +124,13 @@ export function createChatTools(ctx: Ctx) {
         return { items: [], error: `Search failed: ${errMsg(e)}` }
       }
       let vector: MessageHit[] = []
-      if (VECTOR_SEARCH_APPROVED) {
-        try {
-          if ((await deps.store.countEmbedded(s.clientIds)) > 0) {
-            const emb = await deps.embedQuery(q)
-            if (emb) vector = await deps.store.searchMessagesVector(emb, s.clientIds, SEARCH_LIMIT)
-          }
-        } catch {
-          vector = [] // full text still answers; vector search is a bonus
+      try {
+        if ((await deps.store.countEmbedded(s.clientIds)) > 0) {
+          const emb = await deps.embedQuery(q)
+          if (emb) vector = await deps.store.searchMessagesVector(emb, s.clientIds, SEARCH_LIMIT)
         }
+      } catch {
+        vector = [] // full text still answers; vector search is a bonus
       }
       const hits = mergeHits(text, vector, s.clientIds, SEARCH_LIMIT)
       const team = hits.length > 0 ? await deps.teamNumbers() : new Set<string>()
@@ -153,7 +151,7 @@ export function createChatTools(ctx: Ctx) {
           citation,
           client: names.get(clientId) ?? null,
           at: h.message_timestamp,
-          sender: h.sender_name,
+          sender: maskNullable(h.sender_name),
           direction: effectiveDirection(h, team),
           text: shorten(maskCredentials(h.body), BODY_CHARS),
         }
@@ -266,7 +264,7 @@ export function createChatTools(ctx: Ctx) {
         return {
           n: citation.n,
           citation,
-          subject: m.subject,
+          subject: maskNullable(m.subject),
           start: m.start ?? m.date,
           durationMinutes: m.durationMinutes,
           organizer: m.organizerName,

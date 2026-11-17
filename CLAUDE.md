@@ -22,7 +22,10 @@ Build order and open decisions: `docs/ROADMAP.md`.
 ## Hard rules (never break without explicit approval in chat)
 - No new tables, views or columns. Propose any schema change and wait for approval.
 - Never run migrations, DDL or data-changing SQL on production. Read-only queries are fine.
-- Service role key is server-only. Browser and agents use the logged-in user's session so RLS applies.
+- Service role key is server-only. Until RLS for logged-in users is approved (`supabase/proposals/rls-authenticated.sql`),
+  the browser never queries Supabase: every screen reads through `lib/data` (scoped by the signed-in user) and every
+  agent or job store scopes by client id in code. The anon key can read nothing but the view `clients_meeting_picker`.
+  Any new data function must take the user (or the client ids already checked for them) and scope by it.
 - Health score and the ticket council are rebuilt in this repo, as scheduled batch jobs
   (overrides "find and extend the old council code" in `docs/CONTEXT.md`).
 - Collection stays deterministic (fixed n8n flows). AI sits on top, never does collection.

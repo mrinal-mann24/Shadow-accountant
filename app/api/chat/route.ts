@@ -1,5 +1,6 @@
 import { createUIMessageStreamResponse, isStepCount, streamText, toUIMessageStream, type LanguageModel, type ModelMessage } from 'ai'
 import { requireUser } from '@/lib/auth/session'
+import { appTimezone } from '@/lib/env'
 import { listClients, scopeOf } from '@/lib/data'
 import { getModel } from '@/lib/ai/openrouter'
 import { createCitationRegistry, formatCitationDate, nextCitationStart } from '@/lib/agent/citations'
@@ -44,7 +45,7 @@ export async function POST(req: Request): Promise<Response> {
     return jsonError(503, 'The AI model is not set up yet. Ask an engineer to set the OpenRouter settings.')
   }
 
-  const timeZone = process.env.APP_TIMEZONE?.trim() || 'Asia/Kolkata'
+  const timeZone = appTimezone()
   const registry = createCitationRegistry(
     nextCitationStart(messages.filter((m) => m.role === 'assistant').map((m) => m.text)),
   )

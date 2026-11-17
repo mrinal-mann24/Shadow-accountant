@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sanitiseBody } from '@/lib/council/prompt'
+import { sanitiseBody } from '@/lib/ai/sanitise'
 import { hasCredential, HIDDEN, maskCredentials } from './redact'
 
 describe('maskCredentials', () => {

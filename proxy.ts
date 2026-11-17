@@ -5,7 +5,7 @@ import { publicEnv } from '@/lib/env'
 import { DEV_LOGIN_COOKIE } from '@/lib/auth/cookies'
 import { devLoginEmail, isPublicPath, parseDevLoginChoice } from '@/lib/auth/roles'
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   // Job and webhook routes authenticate themselves (cron secret, HubSpot signature); no session needed.
   const p = request.nextUrl.pathname
   if (p.startsWith('/api/jobs/') || p.startsWith('/api/webhooks/')) return NextResponse.next()

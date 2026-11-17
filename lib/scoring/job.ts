@@ -15,10 +15,11 @@ import {
   ticketEvents,
   weightsFromRows,
   type Contribution,
+  DEFAULT_SLA_MINUTES,
+  parseSlaMinutes,
 } from '@/lib/scoring'
 
 const JOB = 'health-score'
-const DEFAULT_SLA_MINUTES = 60
 
 type ScoreRow = Insert<'client_scores'>
 type HistoryRow = Insert<'client_score_history'>
@@ -43,8 +44,7 @@ export async function runHealthScoreJob(o: { write: boolean; now: Date; clientId
   if (weightsRes.error) throw new Error(`score_weights: ${weightsRes.error.message}`)
   if (slaRes.error) result.errors.push(`settings sla_minutes: ${slaRes.error.message}`)
   const weights = weightsFromRows(weightsRes.data ?? [])
-  const slaParsed = Number.parseInt(slaRes.data?.value ?? '', 10)
-  const slaMinutes = Number.isFinite(slaParsed) && slaParsed > 0 ? slaParsed : DEFAULT_SLA_MINUTES
+  const slaMinutes = parseSlaMinutes(slaRes.data?.value) ?? DEFAULT_SLA_MINUTES
   const windowDays = Math.max(1, Math.round(weights.window_days))
 
   let clientsQuery = db.from('clients').select('client_id, va_id, whatsapp_group_id, status')

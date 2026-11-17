@@ -1,4 +1,5 @@
 import 'server-only'
+import { maskNullable } from '@/lib/ai/redact'
 import type { AppUser } from '@/lib/auth/types'
 import { createAdminSupabase } from '@/lib/supabase/admin'
 import { getTeamNumbers } from '@/lib/team'
@@ -23,6 +24,7 @@ type TicketRow = {
 }
 
 function clip(s: string | null | undefined, max = DETAIL_MAX): string | null {
+  s = maskNullable(s) // never show a credential value on screen
   if (!s) return null
   const t = s.trim()
   if (!t) return null
@@ -63,7 +65,7 @@ export function meetingToTimeline(m: MeetingItem, clientId: string): TimelineIte
 
 export function ticketToTimeline(t: TicketRow, event: 'opened' | 'closed' = 'opened'): TimelineItem {
   const at = event === 'closed' && t.closed_at ? t.closed_at : t.opened_at
-  const name = t.title ?? clip(t.summary, 80) ?? 'Ticket'
+  const name = maskNullable(t.title) ?? clip(t.summary, 80) ?? 'Ticket'
   return {
     kind: 'ticket',
     id: t.id,

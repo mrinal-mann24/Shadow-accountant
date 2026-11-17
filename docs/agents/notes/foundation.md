@@ -92,7 +92,7 @@ eslint-config-next 16.4.6, tailwindcss 4.3.5, @tailwindcss/postcss 4.3.5, vitest
 - `serverEnv()` requires the three Supabase vars; everything else optional. Model names are not defaulted in code;
   `.env.example` suggests OPENROUTER_MODEL_A=anthropic/claude-sonnet-5, OPENROUTER_MODEL_B=openai/gpt-5.6-luna.
   Embeddings must be 1536 dims (`vector(1536)`).
-- `createServerSupabase` cannot be used in `middleware.ts` (no next/headers there). auth agent: build the middleware
+- `createServerSupabase` cannot be used in `proxy.ts (was middleware.ts)` (no next/headers there). auth agent: build the middleware
   client with `createServerClient` from `@supabase/ssr` over `request.cookies` / `response.cookies`, using `publicEnv()`.
 - shadcn CLI 4.23 rewrote the utils import to `"cn"` and added an npm package `cn`; I fixed imports to `@/lib/utils`
   and removed the package. If you run `npx shadcn add` yourself, check for this. Prefer asking foundation.

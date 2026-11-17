@@ -33,12 +33,14 @@ type MeetingRow = Pick<
 
 export function toDocumentItem(r: DocRow): DocumentItem {
   const folder = r.folder_name.replace(/\/+$/, '')
+  // File names are shown as they are: masking them hid real names ("Password protected statement.pdf").
+  const fileName = r.file_name
   return {
     id: r.upload_id,
     clientId: r.client_id,
-    fileName: r.file_name,
+    fileName,
     folderName: r.folder_name,
-    path: r.file_name ? `${folder}/${r.file_name}` : folder,
+    path: fileName ? `${folder}/${fileName}` : folder,
     fileType: r.file_type,
     fileSize: r.file_size,
     uploadedAt: r.uploaded_at,

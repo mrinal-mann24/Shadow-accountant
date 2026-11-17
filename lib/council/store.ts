@@ -1,3 +1,4 @@
+import { parseSlaMinutes } from '@/lib/scoring'
 import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Insert, Update } from '@/lib/db/types'
@@ -170,8 +171,7 @@ export function supabaseCouncilStore(db: SupabaseClient<Database>): CouncilStore
     async slaMinutes() {
       const { data, error } = await db.from('settings').select('value').eq('key', 'sla_minutes').maybeSingle()
       fail('settings sla_minutes', error)
-      const n = Number(data?.value)
-      return data && Number.isFinite(n) && n > 0 ? n : null
+      return parseSlaMinutes(data?.value)
     },
 
     async insertVerdict(row) {

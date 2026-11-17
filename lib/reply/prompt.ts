@@ -9,7 +9,7 @@ import {
   ticketLabel,
   type Citation,
 } from '@/lib/agent/citations'
-import { sanitiseBody } from '@/lib/council/prompt'
+import { sanitiseBody } from '@/lib/ai/sanitise'
 import type { ReplyContext } from '@/lib/data/reply-context'
 
 export type ReplyItem = {

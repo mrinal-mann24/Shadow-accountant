@@ -25,6 +25,15 @@
 // top_reasons: up to 3 short reasons for the biggest negative contributors, grouped by kind.
 import type { ClientMetrics, MetricMessage } from '@/lib/metrics'
 
+/** SLA when settings 'sla_minutes' is missing or invalid. Used by the health score and the council. */
+export const DEFAULT_SLA_MINUTES = 60
+
+/** settings.sla_minutes as a positive number of minutes, or null when missing or invalid. */
+export function parseSlaMinutes(raw: string | null | undefined): number | null {
+  const n = Number(raw)
+  return raw != null && raw !== '' && Number.isFinite(n) && n > 0 ? n : null
+}
+
 export const DEFAULT_WEIGHTS: Record<string, number> = {
   window_days: 30,
   half_life_days: 14,

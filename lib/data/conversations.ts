@@ -1,5 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
+import { maskCredentials, maskNullable } from '@/lib/ai/redact'
 import type { AppUser } from '@/lib/auth/types'
 import { ForbiddenError } from '@/lib/auth/roles'
 import { createAdminSupabase } from '@/lib/supabase/admin'
@@ -38,8 +39,8 @@ export function toConversationItem(r: ConvRow, clientName: string | null): Conve
     clientId: r.client_id,
     clientName,
     vaId: r.va_id,
-    title: r.title,
-    summary: r.summary,
+    title: maskNullable(r.title),
+    summary: maskCredentials(r.summary),
     status: r.status,
     tag: r.tag,
     fault: r.fault,

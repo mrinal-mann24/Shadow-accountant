@@ -41,7 +41,7 @@ import { summariseVerdicts, percentile, type VerdictRow, type CouncilUsage } fro
 - Cron times follow the integrator task (health-score 01:30 UTC, hubspot-sync every 30 min, embed hourly), not the
   agents' suggestions (19:00 UTC, every 15 min, every 30 min). Job hints on `/engineer` show the same schedules.
 - Council cron has no `?limit=` in the path; the job's default is already 25.
-- Kept `middleware.ts` (contract name; Next 16 only warns). Renaming to `proxy.ts` is safe later.
+- Kept `proxy.ts (was middleware.ts)` (contract name; Next 16 only warns). Renaming to `proxy.ts` is safe later.
 - Did not unify `formatDateTime` / `formatAgo` / `formatMinutes` / `PageHeader` / `EmptyState` between
   `components/accountant` and `components/admin`: their output differs on purpose (blank vs "Never", "1 day ago"
   vs "1 d ago") and both are tested. Merging would change visible copy for no functional gain.

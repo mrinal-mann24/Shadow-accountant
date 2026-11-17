@@ -1,4 +1,4 @@
-// Cookie names owned by auth. Read by middleware.ts, lib/auth/session.ts, lib/auth/view-as.ts and the sign-out route.
+// Cookie names owned by auth. Read by proxy.ts, lib/auth/session.ts, lib/auth/view-as.ts and the sign-out route.
 
 /** Engineer "view as": the va_id being viewed. httpOnly. */
 export const VIEW_AS_COOKIE = 'view_as_va'

@@ -6,6 +6,9 @@ import { AUTH_COOKIE_OPTIONS, DEV_LOGIN_COOKIE, VIEW_AS_COOKIE } from '@/lib/aut
 import { devLoginEmail, parseDevLoginChoice, safeNextPath } from '@/lib/auth/roles'
 
 async function siteOrigin(): Promise<string> {
+  // A fixed site URL (set on Vercel) beats request headers, which a client can influence.
+  const fixed = process.env.NEXT_PUBLIC_SITE_URL?.trim()
+  if (fixed) return fixed.replace(/\/+$/, '')
   const h = await headers()
   const origin = h.get('origin')
   if (origin) return origin

@@ -1,3 +1,5 @@
+// Used ONLY by the "first reply in business hours" metric (lib/metrics). The SLA and health score use clock
+// time, 24x7 (decided 17 Nov 2026: accountants work any time).
 // Business-hours arithmetic. Business hours: Monday to Saturday, 10:00 to 19:00 in the given timezone.
 // Public holidays are NOT handled (they count as business days).
 

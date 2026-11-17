@@ -32,7 +32,7 @@ Proposed RLS policies go in `supabase/proposals/rls-authenticated.sql` (owner: a
 | Agent | Owns |
 |---|---|
 | foundation | `package.json`, configs, `app/layout.tsx`, `app/globals.css`, `components/ui/*` (shadcn), `lib/env.ts`, `lib/supabase/*`, `lib/db/types.ts`, `lib/jobs/guard.ts`, `lib/utils.ts`, `.env.example` |
-| auth | `middleware.ts`, `app/(auth)/*`, `app/auth/*`, `app/(app)/layout.tsx`, `components/shell/*`, `lib/auth/*`, `supabase/proposals/rls-authenticated.sql` |
+| auth | `proxy.ts`, `app/(auth)/*`, `app/auth/*`, `app/(app)/layout.tsx`, `components/shell/*`, `lib/auth/*`, `supabase/proposals/rls-authenticated.sql` |
 | data | `lib/data/*`, `lib/team/*`, `lib/metrics/*` |
 | scoring | `lib/scoring/*`, `app/api/jobs/health-score/*` |
 | council | `lib/council/*`, `lib/ai/*`, `app/api/jobs/council/*`, `scripts/council-eval.ts` |

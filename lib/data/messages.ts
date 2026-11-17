@@ -1,4 +1,5 @@
 import 'server-only'
+import { maskCredentials } from '@/lib/ai/redact'
 import type { AppUser } from '@/lib/auth/types'
 import { createAdminSupabase } from '@/lib/supabase/admin'
 import type { Row } from '@/lib/db/types'
@@ -28,7 +29,8 @@ export function toMessageItem(r: MessageRow, team: Set<string>): MessageItem {
     id: r.message_id,
     waMessageId: r.dedup_hash,
     at: r.message_timestamp,
-    body: r.body ?? '',
+    // Credential values (OTP, password) are hidden before anything reaches a screen (CLAUDE.md hard rule).
+    body: maskCredentials(r.body),
     senderName: r.sender_name,
     direction: effectiveDirection(r, team),
     storedDirection: r.direction,
