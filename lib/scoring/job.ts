@@ -27,10 +27,17 @@ type Computed = { client_id: string; score: ScoreRow; history: HistoryRow; contr
 
 /**
  * Daily health score for every client with a WhatsApp group (or just `clientIds`).
+ * pilotOnly (HEALTH_SCORE_PILOT_ONLY): the daily run scores only clients with the council on, because the score
+ * uses tickets and other clients have none yet. Named clientIds always run.
  * Dry-run (write false) computes and returns the rows in `details`; write mode upserts
  * client_scores (one row per client) and client_score_history (client_id + score_date in APP_TIMEZONE).
  */
-export async function runHealthScoreJob(o: { write: boolean; now: Date; clientIds?: string[] }): Promise<JobResult> {
+export async function runHealthScoreJob(o: {
+  write: boolean
+  now: Date
+  clientIds?: string[]
+  pilotOnly?: boolean
+}): Promise<JobResult> {
   const result: JobResult = { job: JOB, dryRun: !o.write, processed: 0, written: 0, errors: [] }
   const db = createAdminSupabase()
   const timezone = serverEnv().APP_TIMEZONE
@@ -50,6 +57,7 @@ export async function runHealthScoreJob(o: { write: boolean; now: Date; clientId
   let clientsQuery = db.from('clients').select('client_id, va_id, whatsapp_group_id, status')
   const named = Boolean(o.clientIds && o.clientIds.length > 0)
   clientsQuery = named ? clientsQuery.in('client_id', o.clientIds!) : clientsQuery.not('whatsapp_group_id', 'is', null)
+  if (!named && o.pilotOnly) clientsQuery = clientsQuery.eq('council_enabled', true)
   const clientsRes = await clientsQuery
   if (clientsRes.error) throw new Error(`clients: ${clientsRes.error.message}`)
   // The daily run scores active clients only (Inactive = churned or parked in HubSpot); named clients always run.

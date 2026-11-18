@@ -34,6 +34,20 @@ export const MAX_CANDIDATE_PAGES = 10
  */
 export const DEFAULT_BUDGET_MS = 150_000
 
+/**
+ * COUNCIL_START_DATE ("YYYY-MM-DD", an IST date): the council only reads messages from 00:00 IST that day.
+ * Blank means no start date (every unprocessed message). Anything else throws, so a typo stops the run
+ * instead of quietly voting on the whole history.
+ */
+export function parseCouncilStartDate(raw: string | undefined): string | null {
+  const v = raw?.trim()
+  if (!v) return null
+  const utc = /^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(`${v}T00:00:00Z`) : null
+  const valid = !!utc && !Number.isNaN(utc.getTime()) && utc.toISOString().slice(0, 10) === v
+  if (!valid) throw new Error(`COUNCIL_START_DATE must be a date like 2026-10-19, got "${v}"`)
+  return new Date(`${v}T00:00:00+05:30`).toISOString()
+}
+
 /** ?limit= for the job route: default 25, clamped to 1..100. */
 export function parseCouncilLimit(raw: string | null): number {
   const n = Number.parseInt(raw ?? '', 10)
@@ -87,7 +101,7 @@ function isDead(log: LogRow | undefined): boolean {
  * A dry run calls the models only when `vote` is true; otherwise it lists the messages it would vote on.
  */
 export async function runCouncilJob(
-  o: { write: boolean; limit: number; clientIds?: string[]; vote?: boolean; budgetMs?: number },
+  o: { write: boolean; limit: number; clientIds?: string[]; vote?: boolean; budgetMs?: number; since?: string | null },
   deps: CouncilDeps = {},
 ): Promise<JobResult> {
   const store = deps.store ?? supabaseCouncilStore(createAdminSupabase())
@@ -119,7 +133,7 @@ export async function runCouncilJob(
   let pages = 0
   let exhausted = false
   while (todo.length < o.limit && pages < MAX_CANDIDATE_PAGES) {
-    const page = await store.pendingMessages(clientIds, CANDIDATE_PAGE, pages * CANDIDATE_PAGE)
+    const page = await store.pendingMessages(clientIds, CANDIDATE_PAGE, pages * CANDIDATE_PAGE, o.since ?? null)
     pages++
     const fresh = page.filter((m) => !seen.has(m.message_id))
     for (const m of fresh) seen.add(m.message_id)
@@ -181,6 +195,7 @@ export async function runCouncilJob(
       clients: clients.length,
       outcomes,
       skipped,
+      since: o.since ?? null,
       wouldVote: todo.map((m) => ({ message_id: m.message_id, client_id: m.client_id, at: m.message_timestamp })),
       note: 'Dry run without ?vote=1: no model calls were made.',
       sla,
@@ -263,7 +278,7 @@ export async function runCouncilJob(
 
   // 4. SLA marking always runs: the time budget above leaves room for it.
   const sla = await markSlaBreaches(store, clientIds, o.write, now(), team, result)
-  result.details = { clients: clients.length, outcomes, skipped, sla, ...(stoppedEarly ? { stoppedEarly } : {}) }
+  result.details = { clients: clients.length, since: o.since ?? null, outcomes, skipped, sla, ...(stoppedEarly ? { stoppedEarly } : {}) }
   return result
 }
 

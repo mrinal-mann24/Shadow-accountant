@@ -4,6 +4,14 @@ import { runHealthScoreJob } from '@/lib/scoring/job'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
+/** HEALTH_SCORE_PILOT_ONLY: blank or "false" = every client, "true" = council clients only, anything else throws. */
+function parsePilotOnly(raw: string | undefined): boolean {
+  const v = raw?.trim().toLowerCase() ?? ''
+  if (v === '' || v === 'false') return false
+  if (v === 'true') return true
+  throw new Error(`HEALTH_SCORE_PILOT_ONLY must be true or false, got "${raw}"`)
+}
+
 // Daily health score. Dry-run unless jobsWriteEnabled('health-score'). 500 when the run failed (jobHttpStatus). Optional ?clientIds=a,b to score only those clients.
 async function handle(req: Request): Promise<Response> {
   try {
@@ -22,6 +30,9 @@ async function handle(req: Request): Promise<Response> {
       write: jobsWriteEnabled('health-score'),
       now: new Date(),
       clientIds: ids && ids.length > 0 ? ids : undefined,
+      // Pilot: score only council clients until every client has tickets. A typo fails the run (500) instead of
+      // quietly scoring every client.
+      pilotOnly: parsePilotOnly(process.env.HEALTH_SCORE_PILOT_ONLY),
     })
     return Response.json(result, { status: jobHttpStatus(result) })
   } catch (e) {

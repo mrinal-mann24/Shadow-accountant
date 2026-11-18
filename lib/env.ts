@@ -52,7 +52,8 @@ export function appTimezone(): string {
 
 // Deliberate direct process.env reads elsewhere (each fails closed when unset): CRON_SECRET, JOBS_WRITE_* (lib/jobs/guard.ts),
 // HUBSPOT_WEBHOOK_SECRET (app/api/webhooks/hubspot), HUBSPOT_PUSH_ENABLED (lib/hubspot/sync.ts), DEV_LOGIN_* (lib/auth),
-// NEXT_PUBLIC_SITE_URL (login). They are read at call time so a missing value never breaks the build.
+// NEXT_PUBLIC_SITE_URL (login), COUNCIL_START_DATE (council route), HEALTH_SCORE_PILOT_ONLY (health-score route).
+// They are read at call time so a missing value never breaks the build.
 
 /** Public (browser-safe) env. Literal process.env access so Next inlines the values in client bundles. */
 export function publicEnv(): PublicEnv {

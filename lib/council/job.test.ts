@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Insert, Update } from '@/lib/db/types'
-import { CANDIDATE_PAGE, MAX_CANDIDATE_PAGES, parseCouncilLimit, runCouncilJob } from './job'
+import { CANDIDATE_PAGE, MAX_CANDIDATE_PAGES, parseCouncilLimit, parseCouncilStartDate, runCouncilJob } from './job'
 import type { CouncilStore, DirectionFields, LogRow, PendingMessage, SlaCandidate, StoredConversation, StoredVerdict } from './store'
 import type { Vote } from './types'
 import type { VoteFn } from './vote'
@@ -87,9 +87,11 @@ function fakeStore(init: {
     async councilClients() {
       return init.councilEnabled === false ? [] : [{ client_id: 'c1', client_name: 'Acme', va_id: 'va-1', whatsapp_group_id: 'g1' }]
     },
-    async pendingMessages(_ids, limit, offset) {
+    async pendingMessages(_ids, limit, offset, since) {
       writes.pageCalls++
-      return init.messages.filter((m) => !processed.has(m.message_id)).slice(offset, offset + limit)
+      return init.messages
+        .filter((m) => !processed.has(m.message_id) && (!since || Date.parse(m.message_timestamp) >= Date.parse(since)))
+        .slice(offset, offset + limit)
     },
     async existingVerdicts(ids) {
       return new Map([...verdicts].filter(([id]) => ids.includes(id)))
@@ -183,6 +185,33 @@ describe('parseCouncilLimit', () => {
     expect(parseCouncilLimit('0')).toBe(25)
     expect(parseCouncilLimit('10')).toBe(10)
     expect(parseCouncilLimit('500')).toBe(100)
+  })
+})
+
+describe('COUNCIL_START_DATE', () => {
+  it('parses an IST date to 00:00 IST; blank means no start date; anything else throws', () => {
+    expect(parseCouncilStartDate('2026-10-19')).toBe('2026-10-18T18:30:00.000Z')
+    expect(parseCouncilStartDate(' 2026-12-01 ')).toBe('2026-11-30T18:30:00.000Z')
+    expect(parseCouncilStartDate(undefined)).toBeNull()
+    expect(parseCouncilStartDate('  ')).toBeNull()
+    for (const bad of ['19-10-2026', '2026-13-01', '2026-02-30', '2026-10-19T00:00', 'yes']) {
+      expect(() => parseCouncilStartDate(bad)).toThrow(/COUNCIL_START_DATE/)
+    }
+  })
+  it('only votes on messages from the start date; older unprocessed messages are left alone', async () => {
+    const { store } = fakeStore({
+      messages: [
+        msg('old', '2026-10-18T18:29:59Z', 'Old question before the pilot'),
+        msg('new', '2026-10-18T18:30:00Z', 'Please send TDS challan'),
+      ],
+    })
+    const since = parseCouncilStartDate('2026-10-19')
+    const res = await runCouncilJob({ write: false, limit: 25, since }, deps(store, voter(vote('new'), vote('new'))))
+    const d = res.details as { since: string; wouldVote: { message_id: string }[] }
+    expect(d.since).toBe(since)
+    expect(d.wouldVote.map((m) => m.message_id)).toEqual(['new'])
+    const all = await runCouncilJob({ write: false, limit: 25 }, deps(store, voter(vote('new'), vote('new'))))
+    expect((all.details as { wouldVote: { message_id: string }[] }).wouldVote.map((m) => m.message_id)).toEqual(['old', 'new'])
   })
 })
 

@@ -41,6 +41,21 @@ describe('/api/jobs/health-score', () => {
     expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ write: true, clientIds: undefined }))
   })
 
+  it('passes pilotOnly only when HEALTH_SCORE_PILOT_ONLY is true', async () => {
+    vi.stubEnv('CRON_SECRET', 'abc')
+    run.mockResolvedValue({ job: 'health-score', dryRun: true, processed: 0, written: 0, errors: [] })
+    await GET(req(undefined, 'Bearer abc'))
+    expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ pilotOnly: false }))
+    vi.stubEnv('HEALTH_SCORE_PILOT_ONLY', ' TRUE ')
+    await GET(req(undefined, 'Bearer abc'))
+    expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ pilotOnly: true }))
+    vi.stubEnv('HEALTH_SCORE_PILOT_ONLY', 'ture')
+    const res = await GET(req(undefined, 'Bearer abc'))
+    expect(res.status).toBe(500)
+    expect((await res.json()).errors[0]).toMatch(/HEALTH_SCORE_PILOT_ONLY/)
+    expect(run).toHaveBeenCalledTimes(2)
+  })
+
   it('returns 500 when the job reports a fatal error, 200 for partial errors', async () => {
     vi.stubEnv('CRON_SECRET', 'abc')
     run.mockResolvedValue({ job: 'health-score', dryRun: true, processed: 0, written: 0, errors: ['clients: boom'], fatal: true })

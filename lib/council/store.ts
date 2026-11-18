@@ -44,8 +44,11 @@ export type DirectionFields = { direction: string | null; sender_phone: string |
 
 export interface CouncilStore {
   councilClients(clientIds?: string[]): Promise<CouncilClient[]>
-  /** processed_at is null, oldest first (message_timestamp, then message_id), one page from offset. */
-  pendingMessages(clientIds: string[], limit: number, offset: number): Promise<PendingMessage[]>
+  /**
+   * processed_at is null, oldest first (message_timestamp, then message_id), one page from offset.
+   * since (ISO): only messages at or after it (COUNCIL_START_DATE); null reads every unprocessed message.
+   */
+  pendingMessages(clientIds: string[], limit: number, offset: number, since: string | null): Promise<PendingMessage[]>
   /** Stored verdicts by message_id, for messages that already have one. */
   existingVerdicts(messageIds: string[]): Promise<Map<string, StoredVerdict>>
   processingLog(messageIds: string[]): Promise<Map<string, LogRow>>
@@ -94,12 +97,10 @@ export function supabaseCouncilStore(db: SupabaseClient<Database>): CouncilStore
         .map(({ client_id, client_name, va_id, whatsapp_group_id }) => ({ client_id, client_name, va_id, whatsapp_group_id }))
     },
 
-    async pendingMessages(clientIds, limit, offset) {
-      const { data, error } = await db
-        .from('client_messages')
-        .select(MESSAGE_COLUMNS)
-        .is('processed_at', null)
-        .in('client_id', clientIds)
+    async pendingMessages(clientIds, limit, offset, since) {
+      let q = db.from('client_messages').select(MESSAGE_COLUMNS).is('processed_at', null).in('client_id', clientIds)
+      if (since) q = q.gte('message_timestamp', since)
+      const { data, error } = await q
         .order('message_timestamp', { ascending: true })
         .order('message_id', { ascending: true })
         .range(offset, offset + limit - 1)

@@ -1,5 +1,5 @@
 import { assertCronAuth, jobHttpStatus, jobsWriteEnabled, type JobResult } from '@/lib/jobs/guard'
-import { parseCouncilLimit, runCouncilJob } from '@/lib/council/job'
+import { parseCouncilLimit, parseCouncilStartDate, runCouncilJob } from '@/lib/council/job'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -27,6 +27,8 @@ async function handle(req: Request): Promise<Response> {
       limit: parseCouncilLimit(params.get('limit')),
       vote: params.get('vote') === '1',
       clientIds: ids && ids.length > 0 ? ids : undefined,
+      // COUNCIL_START_DATE (IST date): older messages are never voted on. A bad value fails the run (500).
+      since: parseCouncilStartDate(process.env.COUNCIL_START_DATE),
     })
     return Response.json(result, { status: jobHttpStatus(result) })
   } catch (e) {
