@@ -270,9 +270,10 @@ describe('runCouncilJob write mode', () => {
       claude_decision: 'new',
       gpt_decision: 'new',
       final_decision: 'new',
-      agreed: true,
       final_conv_id: 'new-1',
     })
+    // agreed is a generated column in the database: never sent on insert.
+    expect(writes.verdicts[0]).not.toHaveProperty('agreed')
     expect(writes.created[0]).toMatchObject({
       client_id: 'c1',
       opened_by: 'incoming',
@@ -294,7 +295,7 @@ describe('runCouncilJob write mode', () => {
       conversations: [conv('conv-1')],
     })
     await runCouncilJob({ write: true, limit: 25 }, deps(store, voter(vote('continue', 'conv-1'), vote('new'))))
-    expect(writes.verdicts[0]).toMatchObject({ final_decision: 'continue', final_conv_id: 'conv-1', agreed: false })
+    expect(writes.verdicts[0]).toMatchObject({ final_decision: 'continue', final_conv_id: 'conv-1' })
     expect(writes.updated[0]).toEqual([
       'conv-1',
       expect.objectContaining({
@@ -328,7 +329,7 @@ describe('runCouncilJob write mode', () => {
   it('treats an invented target id as no_action and still marks the message processed', async () => {
     const { store, writes } = fakeStore({ messages: [msg('m1', '2026-11-16T09:00:00Z', 'ok')], conversations: [conv('conv-1')] })
     await runCouncilJob({ write: true, limit: 25 }, deps(store, voter(vote('close', 'fake'), vote('close', 'fake'))))
-    expect(writes.verdicts[0]).toMatchObject({ claude_decision: 'no_action', final_decision: 'no_action', agreed: true })
+    expect(writes.verdicts[0]).toMatchObject({ claude_decision: 'no_action', final_decision: 'no_action' })
     expect(writes.updated).toHaveLength(0)
     expect(writes.marked).toEqual([['m1', null]])
   })

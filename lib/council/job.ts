@@ -327,7 +327,8 @@ async function applyDecision(p: {
     gpt_target_conv_id: b.target_conversation_id,
     gpt_reasoning: b.reasoning,
     gpt_latency_ms: rb.latencyMs,
-    agreed: final.agreed,
+    // No `agreed`: it is a generated column in the database (gpt_decision = claude_decision and same target).
+    // Sending it fails every insert with "cannot insert a non-DEFAULT value into column agreed".
     final_decision: final.decision,
     final_conv_id: finalConvId,
   })
