@@ -1,0 +1,55 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "{{APP_ID}}",
+  "developer": {
+    "name": "AI Accountant",
+    "websiteUrl": "{{SITE_URL}}",
+    "privacyUrl": "{{SITE_URL}}",
+    "termsOfUseUrl": "{{SITE_URL}}"
+  },
+  "name": {
+    "short": "Shadow",
+    "full": "Shadow Accountant"
+  },
+  "description": {
+    "short": "Tickets, reminders, escalations and client files for the VA team.",
+    "full": "Shadow Accountant brings the Virtual Accounting practice into Teams. It posts new client tickets, reminders when a client has been waiting for a reply during business hours, escalations for the Escalations channel and new client files. Start, close or reassign a ticket straight from the card, and ask any question about your clients in a 1:1 chat with Shadow to get an answer with sources. Admins link each Senior Accountant's channel by typing 'link <accountant email>' in it, and the Escalations channel with 'link escalations'."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#314DD0",
+  "bots": [
+    {
+      "botId": "{{APP_ID}}",
+      "scopes": ["team", "personal"],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["team"],
+          "commands": [
+            { "title": "help", "description": "What Shadow does and the commands it understands" },
+            { "title": "link", "description": "Admin: link this channel to an accountant email, or to escalations" },
+            { "title": "unlink", "description": "Admin: stop posting to this channel" },
+            { "title": "channels", "description": "Show which channels are linked" }
+          ]
+        },
+        {
+          "scopes": ["personal"],
+          "commands": [
+            { "title": "help", "description": "What Shadow does and the commands it understands" },
+            { "title": "link", "description": "Linking is done in a team channel, not here" },
+            { "title": "unlink", "description": "Unlinking is done in a team channel, not here" },
+            { "title": "channels", "description": "Show which channels are linked" }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": ["{{SITE_HOST}}"]
+}

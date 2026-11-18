@@ -13,3 +13,4 @@ next-env.d.ts
 # Rollback exports and applied-change records hold message ids and client phone numbers: keep them out of git.
 supabase/**/*.csv
 supabase/**/*APPLIED-rollback.sql
+teams-app/dist/

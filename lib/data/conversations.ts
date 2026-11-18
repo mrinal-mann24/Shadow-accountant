@@ -146,3 +146,39 @@ export async function updateConversation(user: AppUser, id: string, patch: Conve
   const res = await db.from('conversations').update(update).eq('id', id)
   if (res.error) throw new Error(`updateConversation: ${res.error.message}`)
 }
+
+/** The ticket's owner and status, or null when it does not exist or its client is outside the user's scope. Read-only. */
+export async function ticketForUser(
+  user: AppUser,
+  id: string,
+): Promise<{ id: string; clientId: string; vaId: string | null; status: string } | null> {
+  if (!id) return null
+  const db = createAdminSupabase()
+  const { data, error } = await db.from('conversations').select('id, client_id, va_id, status').eq('id', id).maybeSingle()
+  if (error) {
+    if (isInvalidInput(error)) return null
+    throw new Error(`ticketForUser: ${error.message}`)
+  }
+  if (!data) return null
+  if (!(await canAccessClient(db, user, data.client_id))) return null
+  return { id: data.id, clientId: data.client_id, vaId: data.va_id, status: data.status }
+}
+
+/**
+ * Admin only (never while viewing as). Sets conversations.va_id for one ticket.
+ * Throws ForbiddenError, Error('Accountant not found.') or Error('Ticket not found.').
+ */
+export async function reassignTicket(user: AppUser, id: string, vaId: string): Promise<void> {
+  assertCanMutate(user, ['admin'])
+  const db = createAdminSupabase()
+  const va = await db.from('vas').select('va_id').eq('va_id', vaId).maybeSingle()
+  if (va.error && !isInvalidInput(va.error)) throw new Error(`reassignTicket: ${va.error.message}`)
+  if (!va.data) throw new Error('Accountant not found.')
+  const { data, error } = await db
+    .from('conversations')
+    .update({ va_id: vaId, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('id')
+  if (error && !isInvalidInput(error)) throw new Error(`reassignTicket: ${error.message}`)
+  if (!data || data.length === 0) throw new Error('Ticket not found.')
+}

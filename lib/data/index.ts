@@ -4,7 +4,7 @@ import 'server-only'
 
 export { listClients, getClient, listVas, assignClient, setCouncilEnabled } from './clients'
 export { listMessages } from './messages'
-export { listConversations, updateConversation } from './conversations'
+export { listConversations, updateConversation, ticketForUser, reassignTicket } from './conversations'
 export { getClientScores, getScoreHistory } from './scores'
 export { listDocuments, listMeetings } from './documents'
 export { getTimeline, listRecentActivity } from './timeline'

@@ -1,10 +1,19 @@
 // In-memory stand-in for the Supabase query builder, for unit tests only. Supports the subset of the
-// PostgREST API used by lib/data: select (incl. count head), update, eq, neq, in, lt, lte, gt, gte,
+// PostgREST API used by lib/data: select (incl. count head), update, insert, delete, eq, neq, in, lt, lte, gt, gte,
 // order, range, limit, maybeSingle, single. Column lists in select() are ignored (full rows returned).
+// Options: `unique` makes insert fail with Postgres code 23505 on a duplicate key; `fail` injects an error.
 
 type R = Record<string, unknown>
 export type FakeTables = Record<string, R[]>
-export type FakeCall = { table: string; op: 'select' | 'update'; filters: string[]; patch?: R }
+export type FakeOp = 'select' | 'update' | 'insert' | 'delete'
+export type FakeCall = { table: string; op: FakeOp; filters: string[]; patch?: R }
+export type FakeError = { message: string; code?: string }
+export type FakeOptions = {
+  /** Unique keys per table, each a list of columns, e.g. { t: [['kind', 'ref_id']] }. */
+  unique?: Record<string, string[][]>
+  /** Return an error for a call instead of running it (null: run normally). */
+  fail?: (call: { table: string; op: FakeOp }) => FakeError | null
+}
 
 function cmp(a: unknown, b: unknown): number {
   if (a === b) return 0
@@ -22,13 +31,15 @@ class FakeQuery implements PromiseLike<unknown> {
   private single: 'one' | 'maybe' | null = null
   private head = false
   private countMode = false
-  private op: 'select' | 'update' = 'select'
+  private op: FakeOp = 'select'
   private patch: R | undefined
+  private inserts: R[] = []
 
   constructor(
     private table: string,
     private tables: FakeTables,
     private calls: FakeCall[],
+    private opts: FakeOptions = {},
   ) {}
 
   select(_cols?: string, opts?: { count?: string; head?: boolean }) {
@@ -39,6 +50,15 @@ class FakeQuery implements PromiseLike<unknown> {
   update(patch: R) {
     this.op = 'update'
     this.patch = patch
+    return this
+  }
+  insert(rows: R | R[]) {
+    this.op = 'insert'
+    this.inserts = Array.isArray(rows) ? rows : [rows]
+    return this
+  }
+  delete() {
+    this.op = 'delete'
     return this
   }
   private add(desc: string, f: (r: R) => boolean) {
@@ -93,10 +113,34 @@ class FakeQuery implements PromiseLike<unknown> {
     return this
   }
 
-  private run(): { data: unknown; error: null | { message: string }; count?: number } {
+  private run(): { data: unknown; error: null | FakeError; count?: number } {
     const rows = this.tables[this.table] ?? []
+    this.calls.push({
+      table: this.table,
+      op: this.op,
+      filters: this.filterLog,
+      patch: this.op === 'insert' ? this.inserts[0] : this.patch,
+    })
+    const failed = this.opts.fail?.({ table: this.table, op: this.op }) ?? null
+    if (failed) return { data: null, error: failed }
+    if (this.op === 'insert') {
+      const keys = this.opts.unique?.[this.table] ?? []
+      const all = [...rows]
+      for (const row of this.inserts) {
+        if (keys.some((cols) => all.some((r) => cols.every((c) => r[c] === row[c])))) {
+          return { data: null, error: { message: 'duplicate key value violates unique constraint', code: '23505' } }
+        }
+        all.push(row)
+      }
+      const added = this.inserts.map((r) => ({ ...r }))
+      this.tables[this.table] = [...rows, ...added]
+      return { data: added.map((r) => ({ ...r })), error: null }
+    }
     const matched = rows.filter((r) => this.filters.every((f) => f(r)))
-    this.calls.push({ table: this.table, op: this.op, filters: this.filterLog, patch: this.patch })
+    if (this.op === 'delete') {
+      this.tables[this.table] = rows.filter((r) => !matched.includes(r))
+      return { data: matched.map((r) => ({ ...r })), error: null }
+    }
     if (this.op === 'update') {
       for (const r of matched) Object.assign(r, this.patch)
       return { data: matched.map((r) => ({ ...r })), error: null }
@@ -128,8 +172,8 @@ class FakeQuery implements PromiseLike<unknown> {
   }
 }
 
-export function createFakeSupabase(tables: FakeTables) {
+export function createFakeSupabase(tables: FakeTables, opts: FakeOptions = {}) {
   const calls: FakeCall[] = []
-  const client = { from: (table: string) => new FakeQuery(table, tables, calls) }
+  const client = { from: (table: string) => new FakeQuery(table, tables, calls, opts) }
   return { client, calls, tables }
 }

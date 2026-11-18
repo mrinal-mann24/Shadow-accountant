@@ -1158,6 +1158,46 @@ export type Database = {
         }
         Relationships: []
       }
+      // Added by hand from supabase/proposals/teams-notifications.sql until the types are regenerated.
+      teams_notifications: {
+        Row: {
+          action: string | null
+          action_at: string | null
+          action_by: string | null
+          activity_id: string | null
+          channel_id: string
+          client_id: string | null
+          id: string
+          kind: string
+          ref_id: string
+          sent_at: string
+        }
+        Insert: {
+          action?: string | null
+          action_at?: string | null
+          action_by?: string | null
+          activity_id?: string | null
+          channel_id: string
+          client_id?: string | null
+          id?: string
+          kind: string
+          ref_id: string
+          sent_at?: string
+        }
+        Update: {
+          action?: string | null
+          action_at?: string | null
+          action_by?: string | null
+          activity_id?: string | null
+          channel_id?: string
+          client_id?: string | null
+          id?: string
+          kind?: string
+          ref_id?: string
+          sent_at?: string
+        }
+        Relationships: []
+      }
       va_meeting_transcripts: {
         Row: {
           all_attendees: Json | null
