@@ -14,7 +14,13 @@ vi.mock('@/lib/teams/store', () => ({ supabaseTeamsStore: () => ({}) }))
 const appUserByEmail = vi.fn()
 vi.mock('@/lib/teams/identity', () => ({ appUserByEmail: (...a: unknown[]) => appUserByEmail(...a) }))
 vi.mock('@/lib/agent/ask', () => ({ askShadow: vi.fn() }))
-vi.mock('@/lib/data', () => ({ updateConversation: vi.fn(), ticketForUser: vi.fn(), reassignTicket: vi.fn() }))
+const followUpAction = vi.fn()
+vi.mock('@/lib/data', () => ({
+  updateConversation: vi.fn(),
+  ticketForUser: vi.fn(),
+  reassignTicket: vi.fn(),
+  followUpAction: (...a: unknown[]) => followUpAction(...a),
+}))
 
 import { POST } from './route'
 
@@ -99,5 +105,18 @@ describe('POST /api/teams/messages', () => {
     const res = await POST(req(JSON.stringify(activity)))
     expect(res.status).toBe(200)
     expect(appUserByEmail).toHaveBeenCalledWith('asha@x.in')
+  })
+
+  it('wires follow-up card clicks to lib/data followUpAction', async () => {
+    env.mockReturnValue({ appId: 'app', password: 'p', tenantId: 't' })
+    verify.mockResolvedValue(undefined)
+    followUpAction.mockResolvedValue({ id: 'f1' })
+    handle.mockImplementation(async (_a: unknown, deps: { followUps: { action: (...a: unknown[]) => Promise<unknown> } }) => {
+      expect(await deps.followUps.action({ id: 'u1' }, 'f1', 'done')).toEqual({ id: 'f1' })
+      return { status: 200 }
+    })
+    const res = await POST(req(JSON.stringify(activity)))
+    expect(res.status).toBe(200)
+    expect(followUpAction).toHaveBeenCalledWith({ id: 'u1' }, 'f1', 'done')
   })
 })

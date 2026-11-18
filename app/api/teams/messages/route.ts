@@ -1,6 +1,6 @@
 import { after } from 'next/server'
 import { askShadow } from '@/lib/agent/ask'
-import { reassignTicket, ticketForUser, updateConversation } from '@/lib/data'
+import { followUpAction, reassignTicket, ticketForUser, updateConversation } from '@/lib/data'
 import { verifyBotRequest } from '@/lib/teams/auth'
 import { handleActivity } from '@/lib/teams/bot'
 import { defaultConnector } from '@/lib/teams/connector'
@@ -45,6 +45,7 @@ export async function POST(req: Request): Promise<Response> {
       resolveUser: appUserByEmail,
       ask: askShadow,
       data: { updateConversation, ticketForUser, reassignTicket },
+      followUps: { action: followUpAction },
       siteUrl: siteUrl(),
       tenantId: env.tenantId,
       defer: (task) =>

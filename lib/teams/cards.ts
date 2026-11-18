@@ -5,6 +5,7 @@
 import { z } from 'zod'
 import { maskCredentials } from '@/lib/ai/redact'
 import { isTag, TAG_LABELS } from '@/components/accountant/ticket-intent'
+import type { FollowUpAction, FollowUpCardData, FollowUpView } from '@/lib/followups/types'
 import type {
   AdaptiveCard,
   CardActionData,
@@ -309,4 +310,135 @@ export function parseCardAction(value: unknown): CardActionData | null {
   if (!r.success) return null
   const { vaId, ...rest } = r.data.action.data
   return vaId ? { ...rest, vaId } : rest
+}
+
+// ---------------------------------------------------------------- follow-ups
+
+const FOLLOW_UP_VERB = 'followup'
+export const MAX_ITEM = 300
+
+export type FollowUpWhat = 'due' | 'missed' | 'chase' | 'repeat'
+export type FollowUpHandled = { action: 'done' | 'cancelled' | 'extended'; by: string; at: string; note?: string }
+
+const FOLLOW_UP_REF_REST = /^(due|missed|chase|repeat):(\d{1,6})$/
+
+/** The what and n of a follow-up ref 'fu:<id>:<what>:<n>' for this id, or null when it is not one. */
+export function followUpRefParts(ref: string, followUpId: string): { what: FollowUpWhat; n: number } | null {
+  const prefix = `fu:${followUpId}:`
+  if (!ref.startsWith(prefix)) return null
+  const m = FOLLOW_UP_REF_REST.exec(ref.slice(prefix.length))
+  return m ? { what: m[1] as FollowUpWhat, n: Number(m[2]) } : null
+}
+
+export function followUpsUrl(siteUrl: string, clientId: string): string {
+  return `${clientUrl(siteUrl, clientId)}#follow-ups`
+}
+
+/** 90 -> '1 h 30 min ago', 3 days -> '3 days ago'. */
+function timeAgo(at: string, now: Date): string {
+  const t = Date.parse(at)
+  if (Number.isNaN(t)) return ''
+  const minutes = Math.max(0, Math.floor((now.getTime() - t) / 60_000))
+  const days = Math.floor(minutes / 1440)
+  if (days >= 1) return `${days} ${days === 1 ? 'day' : 'days'} ago`
+  return `${formatWaiting(minutes)} ago`
+}
+
+function followUpHeading(v: FollowUpView, what: FollowUpWhat, client: string): string {
+  switch (what) {
+    case 'due':
+      return `Promise due today: ${client}`
+    case 'missed':
+      return v.kind === 'document' ? `Document still not received: ${client}` : `Promise missed: ${client}`
+    case 'chase':
+      return `Chase document: ${client}`
+    case 'repeat':
+      return `Client asked again: ${client}`
+  }
+}
+
+function followUpHandledLabel(v: FollowUpView, action: FollowUpHandled['action']): string {
+  const repeat = v.kind === 'repeat_ask'
+  if (action === 'done') return repeat ? 'Marked answered' : 'Marked done'
+  if (action === 'cancelled') return repeat ? 'Marked not a repeat' : 'Marked not needed'
+  return 'Extended by 1 day'
+}
+
+/**
+ * A follow-up alert: promise due today, promise missed / document still not received, document chase, or a
+ * client asking again. `ref` is the teams_notifications ref_id (followUpRef); `kind` is that row's kind, by
+ * default 'escalation' for missed and repeat (posted to Escalations) and 'reminder' for due and chase.
+ * For a chase, n in the ref is the reminder number (1 based); when it is 0 the stored reminder count is used.
+ */
+export function followUpCard(
+  v: FollowUpView,
+  o: {
+    siteUrl: string
+    what: FollowUpWhat
+    ref: string
+    kind?: 'reminder' | 'escalation'
+    handled?: FollowUpHandled
+    now?: Date
+  },
+): AdaptiveCard {
+  const kind = o.kind ?? (o.what === 'missed' || o.what === 'repeat' ? 'escalation' : 'reminder')
+  const body: unknown[] = [heading(followUpHeading(v, o.what, safe(v.clientName, 120)))]
+  const item = safe(v.item, MAX_ITEM)
+  if (item) body.push(text(item, { weight: 'Bolder' }))
+  if (o.what === 'chase') {
+    const ago = timeAgo(v.sourceAt, o.now ?? new Date())
+    // Cycle-aware chase refs are cycle * 10 + k (k = reminder 1..3), so a new cycle after Extend gets new refs.
+    const raw = followUpRefParts(o.ref, v.id)?.n ?? 0
+    const refN = raw >= 10 ? raw % 10 : raw
+    const n = refN > 0 ? refN : Math.max(1, v.reminderCount)
+    body.push(text(`${ago ? `Asked ${ago}, ` : ''}reminder ${n}`, { isSubtle: true }))
+  }
+  body.push(
+    facts([
+      ['Due', formatIst(v.dueAt)],
+      ['Accountant', plainText(v.vaName?.trim()) || 'Not assigned'],
+      ['From', safe(v.sourceSender, 80)],
+      ['Message time', formatIst(v.sourceAt)],
+    ]),
+  )
+  const open = openUrl('Open in Shadow', followUpsUrl(o.siteUrl, v.clientId))
+  if (o.handled) {
+    const h = o.handled
+    const by = clip(plainText(h.by || 'someone'), 80)
+    const when = formatIst(h.at)
+    body.push(text(`${followUpHandledLabel(v, h.action)} by ${by}${when ? `, ${when}` : ''}`, { weight: 'Bolder', separator: true, spacing: 'Medium' }))
+    if (h.note) body.push(text(safe(h.note, 300), { isSubtle: true }))
+    return card(body, [open])
+  }
+  const button = (title: string, action: FollowUpAction, extra: Record<string, unknown> = {}) => {
+    const data: FollowUpCardData = { action, followUpId: v.id, kind, ref: o.ref }
+    return { type: 'Action.Execute', title, verb: FOLLOW_UP_VERB, data, ...extra }
+  }
+  const buttons =
+    v.kind === 'repeat_ask'
+      ? [button('Answered', 'done', { style: 'positive' }), button('Not a repeat', 'cancel')]
+      : [button('Done', 'done', { style: 'positive' }), button('Not needed', 'cancel'), button('Extend 1 day', 'extend')]
+  return card(body, [...buttons, open])
+}
+
+const followUpSchema = z.object({
+  action: z.object({
+    type: z.literal('Action.Execute'),
+    verb: z.literal(FOLLOW_UP_VERB),
+    data: z.object({
+      action: z.enum(['done', 'cancel', 'extend']),
+      followUpId: id,
+      kind: z.enum(['reminder', 'escalation']),
+      ref: id,
+    }),
+  }),
+})
+
+/** The data of a follow-up card click, or null for anything else (another verb, or a ref of another follow-up). */
+export function parseFollowUpAction(value: unknown): FollowUpCardData | null {
+  const r = followUpSchema.safeParse(value)
+  if (!r.success) return null
+  const { action, followUpId, kind, ref } = r.data.action.data
+  if (!followUpRefParts(ref, followUpId)) return null
+  return { action, followUpId, kind, ref }
 }

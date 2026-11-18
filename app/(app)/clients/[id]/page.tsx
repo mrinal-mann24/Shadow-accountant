@@ -6,17 +6,37 @@ import { Button } from '@/components/ui/button'
 import { ActivityFeed } from '@/components/accountant/activity-feed'
 import { BucketControl } from '@/components/accountant/bucket-control'
 import { FilesGrid } from '@/components/accountant/files-grid'
+import { FollowUpsPanel } from '@/components/accountant/follow-ups'
 import { ticketReadOnlyNote, formatDate, formatDateTime, safeHref } from '@/components/accountant/logic'
 import { TicketList } from '@/components/accountant/ticket-list'
 import { EmptyState, HealthValue, PageHeader, ScoreTrend, Section } from '@/components/accountant/ui'
 import { requireUser } from '@/lib/auth/session'
+import type { AppUser } from '@/lib/auth/types'
 import { getClientBucket } from '@/lib/buckets'
-import { getClient, getScoreHistory, getTimeline, listConversations, listDocuments, listMeetings } from '@/lib/data'
+import { getClient, getScoreHistory, getTimeline, listConversations, listDocuments, listFollowUps, listMeetings } from '@/lib/data'
+import type { FollowUpView } from '@/lib/followups/types'
+import { followUpFormAction } from './follow-up-actions'
 
 export const metadata: Metadata = { title: 'Client' }
 export const dynamic = 'force-dynamic'
 // The Draft reply server action runs on this page: one AI call, 45 s timeout.
 export const maxDuration = 60
+
+/** Open follow-ups plus recent closed ones. Fails soft (null) while the follow_ups table is not there yet. */
+async function loadFollowUps(user: AppUser, clientId: string): Promise<FollowUpView[] | null> {
+  try {
+    // Every open item, plus the latest rows of any status for "Recently closed" (the panel keeps 10 closed ones).
+    const [open, recent] = await Promise.all([
+      listFollowUps(user, clientId, { status: 'open', limit: 500 }),
+      listFollowUps(user, clientId, { status: 'all', limit: 100 }),
+    ])
+    const openIds = new Set(open.map((f) => f.id))
+    return [...open, ...recent.filter((f) => !openIds.has(f.id))]
+  } catch (e) {
+    console.error('[client] follow-ups load failed', e)
+    return null
+  }
+}
 
 export default async function ClientPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser()
@@ -24,13 +44,14 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const client = await getClient(user, id)
   if (!client) notFound()
 
-  const [history, tickets, documents, meetings, timeline, bucket] = await Promise.all([
+  const [history, tickets, documents, meetings, timeline, bucket, followUps] = await Promise.all([
     getScoreHistory(user, id, 30),
     listConversations(user, { clientId: id }),
     listDocuments(user, id, { clientOnly: true }),
     listMeetings(user, id),
     getTimeline(user, id, { limit: 100, clientOnly: true }),
     getClientBucket(id),
+    loadFollowUps(user, id),
   ])
   const now = new Date()
   const openTickets = tickets.filter((t) => t.status === 'open')
@@ -113,6 +134,17 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
           <Section title={`Open tickets (${openTickets.length})`}>
             <TicketList tickets={openTickets} now={now} showClient={false} readOnlyNote={readOnlyNote} emptyText="No open tickets." />
           </Section>
+
+          <div id="follow-ups" className="scroll-mt-20">
+            <Section title="Follow-ups">
+              <FollowUpsPanel
+                items={followUps}
+                nowIso={now.toISOString()}
+                action={followUpFormAction}
+                user={{ role: user.role, viewingAs: Boolean(user.viewingAs) }}
+              />
+            </Section>
+          </div>
 
           {closedTickets.length > 0 && (
             <Section title={`Closed tickets (${closedTickets.length})`}>

@@ -52,17 +52,23 @@ function retryWaitMs(retryAfter: string | null): number {
   return 1000
 }
 
+/** Per-request timeout for Bot Connector and Entra token calls. */
+export const REQUEST_TIMEOUT_MS = 15_000
+
 export function createTeamsConnector(o: TeamsConnectorOptions): TeamsConnector {
   const doFetch = o.fetchImpl ?? fetch
   const now = o.now ?? Date.now
   const sleep = o.sleep ?? defaultSleep
   let token: { value: string; expiresAt: number } | null = null
 
+  // Each attempt is capped, so a slow Microsoft endpoint can never hold a job or the bot past Vercel's limit.
+  const attempt = (url: string, init: RequestInit) => doFetch(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+
   async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
-    const res = await doFetch(url, init)
+    const res = await attempt(url, init)
     if (res.status !== 429 && res.status < 500) return res
     await sleep(retryWaitMs(res.headers.get('retry-after')))
-    return doFetch(url, init)
+    return attempt(url, init)
   }
 
   async function getToken(): Promise<string> {

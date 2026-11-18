@@ -5,23 +5,37 @@ import { Button } from '@/components/ui/button'
 import { computeHomeKpis, formatAgo, groupClientsByBucket, NO_BUCKET_LABEL, sortTicketsBySlaLag, ticketReadOnlyNote } from '@/components/accountant/logic'
 import { TicketList } from '@/components/accountant/ticket-list'
 import { ActivityFeed } from '@/components/accountant/activity-feed'
+import { FollowUpsDueList } from '@/components/accountant/follow-ups'
 import { EmptyState, HealthValue, KpiCard, PageHeader, Section } from '@/components/accountant/ui'
 import { requireUser } from '@/lib/auth/session'
+import type { AppUser } from '@/lib/auth/types'
 import { getClientBucket } from '@/lib/buckets'
-import { listClients, listConversations, listRecentActivity } from '@/lib/data'
+import { listClients, listConversations, listDueFollowUps, listRecentActivity } from '@/lib/data'
+import type { FollowUpView } from '@/lib/followups/types'
 
 export const metadata: Metadata = { title: 'Home' }
 export const dynamic = 'force-dynamic'
 // The Draft reply server action runs on this page: one AI call, 45 s timeout.
 export const maxDuration = 60
 
+/** Fails soft (null) while the follow_ups table is not there yet. */
+async function loadDueFollowUps(user: AppUser): Promise<FollowUpView[] | null> {
+  try {
+    return await listDueFollowUps(user, { limit: 8 })
+  } catch (e) {
+    console.error('[home] follow-ups load failed', e)
+    return null
+  }
+}
+
 export default async function HomePage() {
   const user = await requireUser()
   const now = new Date()
-  const [clients, openTickets, activity] = await Promise.all([
+  const [clients, openTickets, activity, dueFollowUps] = await Promise.all([
     listClients(user),
     listConversations(user, { status: 'open' }),
     listRecentActivity(user, { sinceHours: 24, limit: 40, clientOnly: true }),
+    loadDueFollowUps(user),
   ])
   const buckets = new Map(await Promise.all(clients.map(async (c) => [c.id, await getClientBucket(c.id)] as const)))
   const kpis = computeHomeKpis(clients, openTickets)
@@ -109,12 +123,18 @@ export default async function HomePage() {
           </Section>
         </div>
 
-        <Section title="Today" className="h-fit">
-          <ActivityFeed items={activity} now={now} />
-          {activity.length > 0 && (
-            <p className="mt-3 text-xs text-muted-foreground">Last 24 hours. Latest {formatAgo(activity[0].at, now)}.</p>
-          )}
-        </Section>
+        <div className="flex min-w-0 flex-col gap-6">
+          <Section title="Follow-ups due" className="h-fit">
+            <FollowUpsDueList items={dueFollowUps} nowIso={now.toISOString()} />
+          </Section>
+
+          <Section title="Today" className="h-fit">
+            <ActivityFeed items={activity} now={now} />
+            {activity.length > 0 && (
+              <p className="mt-3 text-xs text-muted-foreground">Last 24 hours. Latest {formatAgo(activity[0].at, now)}.</p>
+            )}
+          </Section>
+        </div>
       </div>
     </div>
   )

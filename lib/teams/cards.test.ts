@@ -3,16 +3,20 @@ import {
   cardAttachment,
   escalationCard,
   filesCard,
+  followUpCard,
+  followUpRefParts,
   formatIst,
   formatWaiting,
   helpCard,
   MAX_SUMMARY,
   MAX_TITLE,
   parseCardAction,
+  parseFollowUpAction,
   plainText,
   reminderCard,
   ticketCard,
 } from './cards'
+import { followUpRef, type FollowUpView } from '@/lib/followups/types'
 import type { AdaptiveCard, TicketForCard } from './types'
 
 const SITE = 'https://shadow.example.com/'
@@ -333,5 +337,167 @@ describe('parseCardAction', () => {
     expect(parseCardAction(invoke({ ...good, ticketId: '' }))).toBeNull()
     expect(parseCardAction(invoke({ ...good, ref: undefined }))).toBeNull()
     expect(parseCardAction(invoke({ ...good, vaId: 42 }))).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------- follow-ups
+
+const fu: FollowUpView = {
+  id: 'f-1',
+  clientId: 'c-9',
+  clientName: 'Acme Traders',
+  kind: 'promise',
+  item: 'Send the GSTR-3B working',
+  status: 'open',
+  dueAt: '2026-11-18T12:30:00Z', // 6:00 pm IST
+  createdAt: '2026-11-18T05:00:00Z',
+  sourceAt: '2026-11-15T10:15:00Z', // 15 Nov, 3:45 pm IST
+  sourceSender: 'Harshit Jain',
+  vaId: 'va-2',
+  vaName: 'Harshit Jain',
+  conversationId: 'conv-1',
+  reminderCount: 0,
+  resolvedAt: null,
+  resolvedBy: null,
+}
+const doc: FollowUpView = { ...fu, kind: 'document', item: 'Bank statement for October', dueAt: null }
+const repeat: FollowUpView = { ...fu, kind: 'repeat_ask', item: 'When will the GST return be filed?', dueAt: null }
+const FU_LINK = 'https://shadow.example.com/clients/c-9#follow-ups'
+const FU_NOW = new Date('2026-11-18T10:15:00Z')
+
+describe('followUpCard', () => {
+  it('due: heading, item, due time, accountant and source time; Done, Not needed, Extend 1 day as reminder', () => {
+    const ref = followUpRef('f-1', 'due')
+    const c = followUpCard(fu, { siteUrl: SITE, what: 'due', ref })
+    expect(c.version).toBe('1.5')
+    const s = json(c)
+    expect(textsOf(c)[0]).toBe('Promise due today: Acme Traders')
+    expect(textsOf(c)).toContain('Send the GSTR-3B working')
+    expect(s).toContain('18 Nov, 6:00 pm')
+    expect(s).toContain('15 Nov, 3:45 pm')
+    expect(s).toContain('Harshit Jain')
+    expect(executes(c).map((a) => a.title)).toEqual(['Done', 'Not needed', 'Extend 1 day'])
+    expect(executes(c).map((a) => a.verb)).toEqual(['followup', 'followup', 'followup'])
+    expect(executes(c).map((a) => a.data)).toEqual([
+      { action: 'done', followUpId: 'f-1', kind: 'reminder', ref },
+      { action: 'cancel', followUpId: 'f-1', kind: 'reminder', ref },
+      { action: 'extend', followUpId: 'f-1', kind: 'reminder', ref },
+    ])
+    expect((executes(c)[0] as Action & { style?: string }).style).toBe('positive')
+    expect(openUrls(c)).toEqual([{ type: 'Action.OpenUrl', title: 'Open in Shadow', url: FU_LINK }])
+  })
+
+  it('missed: promise and document headings, escalation kind by default', () => {
+    const p = followUpCard(fu, { siteUrl: SITE, what: 'missed', ref: followUpRef('f-1', 'missed') })
+    expect(textsOf(p)[0]).toBe('Promise missed: Acme Traders')
+    expect(executes(p).every((a) => a.data?.kind === 'escalation')).toBe(true)
+    const d = followUpCard(doc, { siteUrl: SITE, what: 'missed', ref: followUpRef('f-1', 'missed') })
+    expect(textsOf(d)[0]).toBe('Document still not received: Acme Traders')
+    expect(executes(d).map((a) => a.title)).toEqual(['Done', 'Not needed', 'Extend 1 day'])
+    expect(json(d)).not.toContain('"Due"')
+  })
+
+  it('chase: asked time ago and reminder number from the ref, else the stored count', () => {
+    const c = followUpCard(doc, { siteUrl: SITE, what: 'chase', ref: followUpRef('f-1', 'chase', 2), now: FU_NOW })
+    expect(textsOf(c)[0]).toBe('Chase document: Acme Traders')
+    expect(textsOf(c)).toContain('Asked 3 days ago, reminder 2')
+    expect(executes(c).every((a) => a.data?.kind === 'reminder')).toBe(true)
+    const c0 = followUpCard({ ...doc, reminderCount: 1 }, { siteUrl: SITE, what: 'chase', ref: followUpRef('f-1', 'chase'), now: FU_NOW })
+    expect(textsOf(c0)).toContain('Asked 3 days ago, reminder 1')
+    const recent = followUpCard(
+      { ...doc, sourceAt: '2026-11-18T08:00:00Z' },
+      { siteUrl: SITE, what: 'chase', ref: followUpRef('f-1', 'chase', 1), now: FU_NOW },
+    )
+    expect(textsOf(recent)).toContain('Asked 2 h 15 min ago, reminder 1')
+    // Cycle-aware ref (cycle * 10 + k) after an Extend: the label still shows the reminder number k.
+    const cycled = followUpCard(doc, { siteUrl: SITE, what: 'chase', ref: followUpRef('f-1', 'chase', 20410 * 10 + 3), now: FU_NOW })
+    expect(textsOf(cycled)).toContain('Asked 3 days ago, reminder 3')
+  })
+
+  it('repeat: heading, Answered and Not a repeat (no extend), escalation by default; kind can be overridden', () => {
+    const ref = followUpRef('f-1', 'repeat')
+    const c = followUpCard(repeat, { siteUrl: SITE, what: 'repeat', ref })
+    expect(textsOf(c)[0]).toBe('Client asked again: Acme Traders')
+    expect(executes(c).map((a) => a.title)).toEqual(['Answered', 'Not a repeat'])
+    expect(executes(c).map((a) => a.data)).toEqual([
+      { action: 'done', followUpId: 'f-1', kind: 'escalation', ref },
+      { action: 'cancel', followUpId: 'f-1', kind: 'escalation', ref },
+    ])
+    const r = followUpCard(repeat, { siteUrl: SITE, what: 'repeat', ref, kind: 'reminder' })
+    expect(executes(r).every((a) => a.data?.kind === 'reminder')).toBe(true)
+  })
+
+  it('handled: the Execute buttons become a line with who and when, the link stays', () => {
+    const at = '2026-11-18T10:15:00Z'
+    const ref = followUpRef('f-1', 'due')
+    const done = followUpCard(fu, { siteUrl: SITE, what: 'due', ref, handled: { action: 'done', by: 'Asha', at } })
+    expect(executes(done)).toHaveLength(0)
+    expect(openUrls(done)).toHaveLength(1)
+    expect(textsOf(done)).toContain('Marked done by Asha, 18 Nov, 3:45 pm')
+    const cancelled = followUpCard(fu, { siteUrl: SITE, what: 'due', ref, handled: { action: 'cancelled', by: 'Asha', at } })
+    expect(textsOf(cancelled)).toContain('Marked not needed by Asha, 18 Nov, 3:45 pm')
+    const ext = followUpCard(fu, {
+      siteUrl: SITE,
+      what: 'due',
+      ref,
+      handled: { action: 'extended', by: 'Asha', at, note: 'New due date: 19 Nov, 6:00 pm' },
+    })
+    expect(textsOf(ext)).toContain('Extended by 1 day by Asha, 18 Nov, 3:45 pm')
+    expect(textsOf(ext)).toContain('New due date: 19 Nov, 6:00 pm')
+    const repeatRef = followUpRef('f-1', 'repeat')
+    const ans = followUpCard(repeat, { siteUrl: SITE, what: 'repeat', ref: repeatRef, handled: { action: 'done', by: 'Asha', at } })
+    expect(textsOf(ans)).toContain('Marked answered by Asha, 18 Nov, 3:45 pm')
+    const nr = followUpCard(repeat, { siteUrl: SITE, what: 'repeat', ref: repeatRef, handled: { action: 'cancelled', by: 'Asha', at } })
+    expect(textsOf(nr)).toContain('Marked not a repeat by Asha, 18 Nov, 3:45 pm')
+  })
+
+  it('client text is masked and plain: no links, no images, no credentials', () => {
+    const evil: FollowUpView = {
+      ...fu,
+      clientName: 'Acme [click](https://evil.example)',
+      item: 'Login password: Hunter2pass! see ![x](https://evil.example/a.png) www.evil.example',
+      sourceSender: '**Boss** https://evil.example',
+    }
+    const c = followUpCard(evil, { siteUrl: SITE, what: 'due', ref: followUpRef('f-1', 'due') })
+    const body = JSON.stringify(c.body)
+    expect(body).not.toContain('](')
+    expect(body).not.toContain('Hunter2pass')
+    expect(body).not.toContain('https://evil')
+    expect(body).not.toContain('www.evil')
+    expect(body).not.toContain('**Boss**')
+    expect(textsOf(c)[0]).toBe('Promise due today: Acme click')
+  })
+})
+
+describe('parseFollowUpAction', () => {
+  const ref = followUpRef('f-1', 'missed', 0)
+  const invoke = (data: unknown, verb = 'followup') => ({ action: { type: 'Action.Execute', verb, data } })
+  const good = { action: 'done', followUpId: 'f-1', kind: 'escalation', ref }
+
+  it('accepts the data of a card button', () => {
+    const data = executes(followUpCard(fu, { siteUrl: SITE, what: 'missed', ref }))[2].data
+    expect(parseFollowUpAction(invoke(data))).toEqual({ action: 'extend', followUpId: 'f-1', kind: 'escalation', ref })
+    expect(parseFollowUpAction(invoke(good))).toEqual(good)
+  })
+
+  it('rejects another verb, a ticket click and bad shapes', () => {
+    expect(parseFollowUpAction(invoke(good, 'ticket'))).toBeNull()
+    expect(parseFollowUpAction(null)).toBeNull()
+    expect(parseFollowUpAction({ action: { type: 'Action.Submit', verb: 'followup', data: good } })).toBeNull()
+    expect(parseFollowUpAction(invoke({ ...good, action: 'start' }))).toBeNull()
+    expect(parseFollowUpAction(invoke({ ...good, kind: 'ticket' }))).toBeNull()
+    expect(parseFollowUpAction(invoke({ ...good, followUpId: '' }))).toBeNull()
+    expect(parseCardAction(invoke(good))).toBeNull()
+  })
+
+  it('rejects a ref of another follow-up or a malformed ref', () => {
+    for (const bad of ['fu:f-2:missed:0', 'fu:f-1x:missed:0', 'f-1', 'fu:f-1:', 'fu:f-1:later:0', 'fu:f-1:due:x', 't-1@2026']) {
+      expect(parseFollowUpAction(invoke({ ...good, ref: bad }))).toBeNull()
+    }
+  })
+
+  it('followUpRefParts reads what and n', () => {
+    expect(followUpRefParts('fu:f-1:chase:3', 'f-1')).toEqual({ what: 'chase', n: 3 })
+    expect(followUpRefParts('fu:f-1:chase:3', 'f-2')).toBeNull()
   })
 })

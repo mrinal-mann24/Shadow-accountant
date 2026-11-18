@@ -775,6 +775,64 @@ export type Database = {
           },
         ]
       }
+      // Added by hand from supabase/applied/2026-11-18-follow-ups.sql until the types are regenerated.
+      follow_ups: {
+        Row: {
+          client_id: string
+          conversation_id: string | null
+          created_at: string
+          due_at: string | null
+          escalated_at: string | null
+          id: string
+          item: string
+          kind: string
+          last_reminded_at: string | null
+          reminder_count: number
+          resolved_at: string | null
+          resolved_by: string | null
+          resolved_message_id: string | null
+          resolved_upload_id: string | null
+          source_message_id: string
+          status: string
+        }
+        Insert: {
+          client_id: string
+          conversation_id?: string | null
+          created_at?: string
+          due_at?: string | null
+          escalated_at?: string | null
+          id?: string
+          item: string
+          kind: string
+          last_reminded_at?: string | null
+          reminder_count?: number
+          resolved_at?: string | null
+          resolved_by?: string | null
+          resolved_message_id?: string | null
+          resolved_upload_id?: string | null
+          source_message_id: string
+          status?: string
+        }
+        Update: {
+          client_id?: string
+          conversation_id?: string | null
+          created_at?: string
+          due_at?: string | null
+          escalated_at?: string | null
+          id?: string
+          item?: string
+          kind?: string
+          last_reminded_at?: string | null
+          reminder_count?: number
+          resolved_at?: string | null
+          resolved_by?: string | null
+          resolved_message_id?: string | null
+          resolved_upload_id?: string | null
+          source_message_id?: string
+          status?: string
+        }
+        Relationships: []
+      }
       flagged_messages: {
         Row: {
           body: string | null
@@ -1158,7 +1216,7 @@ export type Database = {
         }
         Relationships: []
       }
-      // Added by hand from supabase/proposals/teams-notifications.sql until the types are regenerated.
+      // Added by hand from supabase/applied/2026-11-18-teams-notifications.sql until the types are regenerated.
       teams_notifications: {
         Row: {
           action: string | null

@@ -3,7 +3,20 @@
 // The route (app/api/teams/messages) verifies the JWT first and builds the real deps.
 import type { AppUser } from '@/lib/auth/types'
 import { ForbiddenError } from '@/lib/auth/roles'
-import { cardAttachment, escalationCard, helpCard, parseCardAction, reminderCard, ticketCard } from './cards'
+import type { FollowUpAction, FollowUpCardData, FollowUpView } from '@/lib/followups/types'
+import {
+  cardAttachment,
+  escalationCard,
+  followUpCard,
+  followUpRefParts,
+  formatIst,
+  helpCard,
+  parseCardAction,
+  parseFollowUpAction,
+  reminderCard,
+  ticketCard,
+  type FollowUpHandled,
+} from './cards'
 import type {
   Activity,
   AdaptiveCard,
@@ -32,12 +45,22 @@ export type BotData = {
   reassignTicket: (user: AppUser, id: string, vaId: string) => Promise<void>
 }
 
+export type BotFollowUps = {
+  /**
+   * lib/data followUpAction: senior_accountant (own clients) or admin. Throws ForbiddenError (also while viewing as
+   * someone), 'Follow-up not found.', 'This follow-up is already closed.' or 'Only promises and document requests
+   * can be extended.'
+   */
+  action: (user: AppUser, id: string, action: FollowUpAction, now?: Date) => Promise<FollowUpView>
+}
+
 export type BotDeps = {
   connector: TeamsConnector
   store: TeamsStore
   resolveUser: ResolveUser
   ask: AskShadow
   data: BotData
+  followUps: BotFollowUps
   siteUrl: string
   tenantId: string
   now?: () => Date
@@ -60,6 +83,9 @@ export const ALREADY_CLOSED = 'This ticket is already closed.'
 export const OTHER_TEAM = 'Shadow is linked to another team. Unlink all channels there first.'
 export const INVALID_CARD = 'This card action is not valid.'
 export const PING_FAILED = 'Could not post the reminder to the accountant channel. Please try again.'
+export const FOLLOW_UP_CLOSED = 'This follow-up is already closed.'
+export const FOLLOW_UP_NOT_FOUND = 'This follow-up was not found. It may have been removed.'
+export const FOLLOW_UP_NO_EXTEND = 'Only promises and document requests can be extended.'
 
 const NOT_FOUND = 'This ticket was not found. It may have been removed.'
 const FAILED = 'Sorry, that did not work. Please try again from Shadow.'
@@ -301,6 +327,7 @@ function refMatchesTicket(data: CardActionData): boolean {
 // Teams waits about 15 s for an invoke answer. The data change (close, reassign, record) happens before the answer;
 // posts to other channels and refreshing stored card copies run after it (deps.defer).
 async function handleCardAction(activity: Activity, deps: BotDeps): Promise<BotReply> {
+  if (isFollowUpVerb(activity.value)) return handleFollowUpAction(activity, deps)
   const data = parseCardAction(activity.value)
   if (!data || !refMatchesTicket(data)) return invokeBadRequest(INVALID_CARD)
 
@@ -436,6 +463,66 @@ async function handleCardAction(activity: Activity, deps: BotDeps): Promise<BotR
     })
   }
   return invokeCard(clicked)
+}
+
+// ---------------------------------------------------------------- follow-up card clicks
+
+function isFollowUpVerb(value: unknown): boolean {
+  const action = (value as { action?: { verb?: unknown } } | null)?.action
+  return typeof action === 'object' && action !== null && action.verb === 'followup'
+}
+
+const FOLLOW_UP_HANDLED: Record<FollowUpAction, FollowUpHandled['action']> = {
+  done: 'done',
+  cancel: 'cancelled',
+  extend: 'extended',
+}
+
+/** Friendly text for an error from followUpAction. Never a stack trace or a raw database message. */
+function followUpError(e: unknown): string {
+  if (e instanceof ForbiddenError) return REFUSAL
+  const message = e instanceof Error ? e.message : ''
+  if (/already closed/i.test(message)) return FOLLOW_UP_CLOSED
+  if (/not found/i.test(message)) return FOLLOW_UP_NOT_FOUND
+  if (/can be extended/i.test(message)) return FOLLOW_UP_NO_EXTEND
+  console.error('[teams-bot] follow-up action failed:', message || String(e))
+  return FAILED
+}
+
+// The follow_ups row is the record of the click (resolved_by / status), so nothing is written to teams_notifications.
+// The answer is the rebuilt card; the stored copy (other viewers) is refreshed after the answer, best effort.
+async function handleFollowUpAction(activity: Activity, deps: BotDeps): Promise<BotReply> {
+  const data: FollowUpCardData | null = parseFollowUpAction(activity.value)
+  const parts = data ? followUpRefParts(data.ref, data.followUpId) : null
+  if (!data || !parts) return invokeBadRequest(INVALID_CARD)
+
+  const who = await identify(activity, deps)
+  if (who.kind === 'unknown') return invokeMessage(NOT_SET_UP)
+  if (who.kind === 'failed') return invokeMessage(LOOKUP_FAILED)
+  const { user } = who
+  const now = (deps.now ?? (() => new Date()))()
+
+  let view: FollowUpView
+  try {
+    view = await deps.followUps.action(user, data.followUpId, data.action, now)
+  } catch (e) {
+    return invokeMessage(followUpError(e))
+  }
+
+  const due = data.action === 'extend' ? formatIst(view.dueAt) : ''
+  const handled: FollowUpHandled = {
+    action: FOLLOW_UP_HANDLED[data.action],
+    by: user.name,
+    at: now.toISOString(),
+    ...(due ? { note: `New due date: ${due}` } : {}),
+  }
+  const card = followUpCard(view, { siteUrl: deps.siteUrl, what: parts.what, ref: data.ref, kind: data.kind, handled, now })
+  later(deps, 'follow-up card update', async () => {
+    const row = await deps.store.get(data.kind, data.ref)
+    if (!row?.activity_id) return
+    await deps.connector.update(activity.serviceUrl, row.channel_id, row.activity_id, cardAttachment(card))
+  })
+  return invokeCard(card)
 }
 
 // ---------------------------------------------------------------- messages

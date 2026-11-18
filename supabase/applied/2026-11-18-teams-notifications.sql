@@ -1,4 +1,5 @@
--- PROPOSAL (approved in chat 18 Nov 2026, "OK both"): one table for the Shadow Teams bot.
+-- APPLIED 18 Nov 2026 to Supabase VA (run by the user after approval in chat, "OK both"); table present with RLS on.
+-- one table for the Shadow Teams bot.
 -- Run once in the Supabase SQL editor (Supabase VA). Rollback at the bottom.
 --
 -- What it stores: every card the bot posted (new ticket, SLA reminder, escalation, new files), so a card is

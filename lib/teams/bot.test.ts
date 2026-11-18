@@ -2,13 +2,17 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { AppUser } from '@/lib/auth/types'
-import { ForbiddenError } from '@/lib/auth/roles'
+import { ForbiddenError, ViewAsReadOnlyError } from '@/lib/auth/roles'
+import { followUpRef, type FollowUpAction, type FollowUpView } from '@/lib/followups/types'
 import {
   AI_FAILED,
   ALREADY_CLOSED,
   ALREADY_DONE,
   cleanText,
   DIRECT_ONLY,
+  FOLLOW_UP_CLOSED,
+  FOLLOW_UP_NO_EXTEND,
+  FOLLOW_UP_NOT_FOUND,
   formatAnswer,
   handleActivity,
   INVALID_CARD,
@@ -59,6 +63,25 @@ const ticket: TicketForCard = {
   vaId: 'va-1',
   vaName: 'Asha',
   slaBreached: false,
+}
+
+const fuView: FollowUpView = {
+  id: 'f1',
+  clientId: 'c1',
+  clientName: 'Acme Traders',
+  kind: 'promise',
+  item: 'Send the GSTR-3B working',
+  status: 'open',
+  dueAt: '2026-11-18T12:30:00.000Z',
+  createdAt: '2026-11-18T05:00:00.000Z',
+  sourceAt: '2026-11-18T04:00:00.000Z',
+  sourceSender: 'Asha',
+  vaId: 'va-1',
+  vaName: 'Asha',
+  conversationId: 'conv-1',
+  reminderCount: 0,
+  resolvedAt: null,
+  resolvedBy: null,
 }
 
 type Sent = { serviceUrl: string; conversationId: string; activity: OutgoingActivity }
@@ -120,6 +143,16 @@ function setup(
     }),
   }
 
+  const followUps = {
+    action: vi.fn(async (user: AppUser, id: string, action: FollowUpAction): Promise<FollowUpView> => {
+      if (user.role === 'engineer') throw new ForbiddenError()
+      if (user.role === 'senior_accountant' && user.vaId !== fuView.vaId) throw new ForbiddenError()
+      if (id !== fuView.id) throw new Error('Follow-up not found.')
+      if (action === 'extend') return { ...fuView, dueAt: '2026-11-19T12:30:00.000Z' }
+      return { ...fuView, status: action === 'done' ? 'done' : 'cancelled' }
+    }),
+  }
+
   const ask = vi.fn(async () => ({
     text: 'Acme filed GSTR-3B on 20 Oct [1].',
     citations: [
@@ -144,6 +177,7 @@ function setup(
     resolveUser: vi.fn(async (email: string) => users[email.toLowerCase()] ?? null),
     ask,
     data,
+    followUps,
     siteUrl: SITE,
     tenantId: TENANT,
     now: o.now ?? (() => NOW),
@@ -154,7 +188,7 @@ function setup(
   const runDeferred = async () => {
     for (const t of tasks.splice(0)) await t()
   }
-  return { deps, sent, updated, tasks, runDeferred, recorded, saved, data, ask, getMap: () => map }
+  return { deps, sent, updated, tasks, runDeferred, recorded, saved, data, followUps, ask, getMap: () => map }
 }
 
 function base(over: Partial<Activity> = {}): Activity {
@@ -786,5 +820,134 @@ describe('guests', () => {
     expect(body(r).value).toBe(NOT_SET_UP)
     expect(s.deps.resolveUser).not.toHaveBeenCalled()
     expect(s.ask).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------- follow-up card clicks
+
+describe('follow-up card clicks', () => {
+  const fuClick = (data: Record<string, unknown>, id?: string): Activity => ({
+    ...base({ type: 'invoke', name: 'adaptiveCard/action', value: { action: { type: 'Action.Execute', verb: 'followup', data } } }),
+    ...(id ? { id } : {}),
+  })
+  const DUE = followUpRef('f1', 'due')
+  const MISSED = followUpRef('f1', 'missed')
+
+  it('done: calls followUpAction, answers the handled card, records nothing in teams_notifications', async () => {
+    const s = setup()
+    const r = await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), s.deps)
+    expect(s.followUps.action).toHaveBeenCalledWith(expect.objectContaining({ email: 'asha@x.in' }), 'f1', 'done', NOW)
+    expect(body(r).type).toBe('application/vnd.microsoft.card.adaptive')
+    const text = cardText(body(r).value)
+    expect(text).toContain('Promise due today: Acme Traders')
+    expect(text).toContain('Marked done by Asha')
+    expect(text).not.toContain('Action.Execute')
+    expect(s.recorded).toHaveLength(0)
+  })
+
+  it('cancel on a repeat ask shows Marked not a repeat; the heading follows the ref', async () => {
+    const s = setup()
+    vi.mocked(s.followUps.action).mockResolvedValueOnce({ ...fuView, kind: 'repeat_ask', status: 'cancelled', dueAt: null })
+    const r = await handleActivity(fuClick({ action: 'cancel', followUpId: 'f1', kind: 'escalation', ref: followUpRef('f1', 'repeat') }), s.deps)
+    const text = cardText(body(r).value)
+    expect(s.followUps.action).toHaveBeenCalledWith(expect.anything(), 'f1', 'cancel', NOW)
+    expect(text).toContain('Client asked again: Acme Traders')
+    expect(text).toContain('Marked not a repeat by Asha')
+  })
+
+  it('extend: the card shows the new due date', async () => {
+    const s = setup()
+    const r = await handleActivity(fuClick({ action: 'extend', followUpId: 'f1', kind: 'escalation', ref: MISSED }), s.deps)
+    const text = cardText(body(r).value)
+    expect(text).toContain('Promise missed: Acme Traders')
+    expect(text).toContain('Extended by 1 day by Asha')
+    expect(text).toContain('New due date: 19 Nov, 6:00 pm')
+  })
+
+  it('refreshes the stored card copy after the answer when it has an activity id', async () => {
+    const s = setup({
+      rows: [
+        { kind: 'escalation', ref_id: MISSED, client_id: 'c1', channel_id: '19:esc', activity_id: 'act-7', sent_at: '', action: null, action_by: null, action_at: null },
+      ],
+    })
+    await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'escalation', ref: MISSED }), s.deps)
+    expect(s.updated).toHaveLength(0)
+    await s.runDeferred()
+    expect(s.updated).toHaveLength(1)
+    expect(s.updated[0]).toMatchObject({ conversationId: '19:esc', activityId: 'act-7' })
+    expect(cardText(s.updated[0].activity)).toContain('Marked done by Asha')
+
+    const none = setup()
+    await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), none.deps)
+    await none.runDeferred()
+    expect(none.updated).toHaveLength(0)
+  })
+
+  it('Forbidden (another accountant, engineer, viewing as) gets the refusal', async () => {
+    for (const email of ['ravi@x.in', 'eng@x.in']) {
+      const s = setup({ email })
+      const r = await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), s.deps)
+      expect(body(r)).toEqual({ statusCode: 200, type: 'application/vnd.microsoft.activity.message', value: REFUSAL })
+    }
+    const v = setup()
+    vi.mocked(v.followUps.action).mockRejectedValueOnce(new ViewAsReadOnlyError())
+    expect(body(await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), v.deps)).value).toBe(REFUSAL)
+  })
+
+  it('closed, not found and extend of a repeat ask get friendly messages; other errors no detail', async () => {
+    const cases: [Error, string][] = [
+      [new Error('This follow-up is already closed.'), FOLLOW_UP_CLOSED],
+      [new Error('Follow-up not found.'), FOLLOW_UP_NOT_FOUND],
+      [new Error('Only promises and document requests can be extended.'), FOLLOW_UP_NO_EXTEND],
+    ]
+    for (const [e, msg] of cases) {
+      const s = setup()
+      vi.mocked(s.followUps.action).mockRejectedValueOnce(e)
+      const r = await handleActivity(fuClick({ action: 'extend', followUpId: 'f1', kind: 'reminder', ref: DUE }), s.deps)
+      expect(body(r).value).toBe(msg)
+    }
+    const s = setup()
+    vi.mocked(s.followUps.action).mockRejectedValueOnce(new Error('update follow_ups: connection refused at db.internal:5432'))
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const r = await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), s.deps)
+    err.mockRestore()
+    expect(String(body(r).value)).not.toContain('5432')
+    expect(String(body(r).value)).toMatch(/did not work/)
+  })
+
+  it('an unknown user is not set up and nothing is changed', async () => {
+    const s = setup({ email: 'stranger@x.in' })
+    const r = await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), s.deps)
+    expect(body(r).value).toBe(NOT_SET_UP)
+    expect(s.followUps.action).not.toHaveBeenCalled()
+  })
+
+  it('a duplicate activity id answers Already done and acts once', async () => {
+    const s = setup()
+    const a = fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }, 'inv-fu-1')
+    expect(body(await handleActivity(a, s.deps)).type).toBe('application/vnd.microsoft.card.adaptive')
+    expect(body(await handleActivity(a, s.deps))).toEqual({ statusCode: 200, type: 'application/vnd.microsoft.activity.message', value: ALREADY_DONE })
+    expect(s.followUps.action).toHaveBeenCalledTimes(1)
+  })
+
+  it('invalid data or a ref of another follow-up is a BadRequest', async () => {
+    const s = setup()
+    for (const data of [
+      { action: 'done', followUpId: 'f1', kind: 'reminder', ref: followUpRef('f2', 'due') },
+      { action: 'done', followUpId: 'f1', kind: 'reminder', ref: 'fu:f1:soon:0' },
+      { action: 'close', followUpId: 'f1', kind: 'reminder', ref: DUE },
+      { action: 'done', ticketId: 't1', kind: 'ticket', ref: 't1' },
+    ]) {
+      const r = await handleActivity(fuClick(data), s.deps)
+      expect(body(r)).toEqual({ statusCode: 400, type: 'application/vnd.microsoft.error', value: { code: 'BadRequest', message: INVALID_CARD } })
+    }
+    expect(s.followUps.action).not.toHaveBeenCalled()
+  })
+
+  it('ticket cards still go the ticket way', async () => {
+    const s = setup()
+    const r = await handleActivity(click({ action: 'start', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)
+    expect(cardText(body(r).value)).toContain('Started by Asha')
+    expect(s.followUps.action).not.toHaveBeenCalled()
   })
 })
