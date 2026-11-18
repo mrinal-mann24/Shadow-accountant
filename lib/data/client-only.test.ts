@@ -9,7 +9,7 @@ const state = vi.hoisted(() => ({ db: null as unknown }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminSupabase: () => state.db }))
 
 import { isClientFile, listDocuments } from './documents'
-import { getTimeline } from './timeline'
+import { getTimeline, listRecentActivity } from './timeline'
 
 const admin: AppUser = { id: 'u', email: 'a@x.com', name: 'A', role: 'admin', vaId: null }
 const doc = (id: string, sender: string | null) => ({
@@ -51,6 +51,20 @@ describe('client page shows only what the client sent', () => {
     expect(t.filter((i) => i.kind === 'document').map((i) => i.id).sort()).toEqual(['client', 'unknown'])
     const all = await getTimeline(admin, 'c1')
     expect(all.filter((i) => i.kind === 'message')).toHaveLength(2)
+  })
+  it('Home feed (listRecentActivity) clientOnly drops outgoing messages and team files', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-17T06:00:00Z'))
+    try {
+      const feed = await listRecentActivity(admin, { sinceHours: 24, clientOnly: true })
+      expect(feed.filter((i) => i.kind === 'message').map((i) => i.id)).toEqual(['in'])
+      expect(feed.filter((i) => i.kind === 'document').map((i) => i.id).sort()).toEqual(['client', 'unknown'])
+      const all = await listRecentActivity(admin, { sinceHours: 24 })
+      expect(all.filter((i) => i.kind === 'message')).toHaveLength(2)
+      expect(all.filter((i) => i.kind === 'document')).toHaveLength(3)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

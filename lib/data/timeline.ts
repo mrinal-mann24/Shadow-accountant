@@ -153,10 +153,11 @@ async function namesFor(db: Db, ids: string[]): Promise<Map<string, string>> {
 /**
  * "Today" feed across the user's clients: messages, files, meetings, tickets opened and closed in the last
  * `sinceHours` (default 24, max 168), newest first, at most `limit` items (default 50, max 200).
+ * clientOnly: only messages and files the client sent (no outgoing team messages or files); tickets and meetings stay.
  */
 export async function listRecentActivity(
   user: AppUser,
-  o: { sinceHours?: number; limit?: number } = {},
+  o: { sinceHours?: number; limit?: number; clientOnly?: boolean } = {},
 ): Promise<ActivityItem[]> {
   const db = createAdminSupabase()
   const ids = await scopedClientIds(db, user)
@@ -170,6 +171,7 @@ export async function listRecentActivity(
   const items: TimelineItem[] = []
   for (const part of parts) {
     let msgQ = db.from('client_messages').select(MESSAGE_COLS).gte('message_timestamp', since)
+    if (o.clientOnly) msgQ = msgQ.eq('direction', 'incoming')
     let docQ = db.from('document_uploads').select(DOCUMENT_COLS).gte('uploaded_at', since)
     let meetQ = db.from('va_meeting_transcripts').select(MEETING_COLS).gte('meeting_start', since)
     let openQ = db.from('conversations').select(TICKET_COLS).gte('opened_at', since)
@@ -199,6 +201,7 @@ export async function listRecentActivity(
     }
     for (const r of msgs.data ?? []) if (r.client_id) items.push(messageToTimeline(toMessageItem(r, team), r.client_id))
     for (const r of docs.data ?? []) {
+      if (o.clientOnly && !isClientFile(r, team)) continue
       const item = r.client_id ? documentToTimeline(toDocumentItem(r), r.client_id) : null
       if (item) items.push(item)
     }

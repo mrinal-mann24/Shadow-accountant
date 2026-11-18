@@ -21,7 +21,7 @@ export default async function HomePage() {
   const [clients, openTickets, activity] = await Promise.all([
     listClients(user),
     listConversations(user, { status: 'open' }),
-    listRecentActivity(user, { sinceHours: 24, limit: 40 }),
+    listRecentActivity(user, { sinceHours: 24, limit: 40, clientOnly: true }),
   ])
   const buckets = new Map(await Promise.all(clients.map(async (c) => [c.id, await getClientBucket(c.id)] as const)))
   const kpis = computeHomeKpis(clients, openTickets)
