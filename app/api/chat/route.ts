@@ -4,7 +4,7 @@ import { appTimezone } from '@/lib/env'
 import { listClients, scopeOf } from '@/lib/data'
 import { getModel } from '@/lib/ai/openrouter'
 import { createCitationRegistry, formatCitationDate, nextCitationStart } from '@/lib/agent/citations'
-import { buildSystemPrompt } from '@/lib/agent/prompt'
+import { buildSystemPrompt, clockTime, promptUser } from '@/lib/agent/prompt'
 import { parseChatRequest, resolveChatScope, toScopedClient } from '@/lib/agent/scope'
 import { createChatTools } from '@/lib/agent/tools'
 
@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 /** Tool rounds per question (each round can call several tools), then the model must answer. */
-export const MAX_STEPS = 6
+export const MAX_STEPS = 8
 
 function jsonError(status: number, error: string): Response {
   return Response.json({ error }, { status })
@@ -50,11 +50,14 @@ export async function POST(req: Request): Promise<Response> {
     nextCitationStart(messages.filter((m) => m.role === 'assistant').map((m) => m.text)),
   )
   const fixedClient = scope.fixedClientId ? (clients.find((c) => c.id === scope.fixedClientId) ?? null) : null
+  const now = new Date()
   const instructions = buildSystemPrompt({
     userName: user.name,
-    today: formatCitationDate(new Date().toISOString(), timeZone),
+    today: formatCitationDate(now.toISOString(), timeZone),
+    time: clockTime(now, timeZone),
     clients: scope.clients,
     fixedClient,
+    user: promptUser(user),
   })
   // History is text only: earlier tool results are not replayed, so the model searches again for new questions.
   const history: ModelMessage[] = messages.map((m) => ({ role: m.role, content: m.text }))

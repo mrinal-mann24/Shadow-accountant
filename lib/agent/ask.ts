@@ -10,7 +10,7 @@ import { appTimezone } from '@/lib/env'
 import { getModel } from '@/lib/ai/openrouter'
 import { maskCredentials } from '@/lib/ai/redact'
 import { citedNumbers, createCitationRegistry, formatCitationDate, type CitationRegistry } from './citations'
-import { buildSystemPrompt } from './prompt'
+import { buildSystemPrompt, clockTime, promptUser } from './prompt'
 import { MAX_TEXT, resolveChatScope, toolClientId, toScopedClient, type ChatScope, type ChatTurn, type ScopedClient } from './scope'
 import { createChatTools } from './tools'
 
@@ -19,7 +19,7 @@ import { createChatTools } from './tools'
 // The setup is duplicated from the chat route on purpose, so the route did not have to change.
 
 /** Tool rounds per question, then the model must answer. Same as the chat route. */
-export const ASK_MAX_STEPS = 6
+export const ASK_MAX_STEPS = 8
 
 export type AskCitation = { n: number; label: string; link?: string }
 /** save: set when the model proposed saving a transcript (Teams chat only); the bot asks the user to confirm. */
@@ -166,6 +166,29 @@ export function createSaveTool(o: { scope: ChatScope; clients: ScopedClient[]; t
   })
 }
 
+/** Most numbers one range marker like [1-13] may expand to. */
+const MAX_RANGE = 40
+/** Highest number a range may expand to (a chat never has this many sources). */
+const MAX_CITATION = 300
+
+/**
+ * Repairs citation markers the model sometimes writes despite the prompt: "[1-13]" or "[n1-n13]" become [1][2]...[13]
+ * (at most MAX_RANGE numbers), "[n3]" becomes [3], and placeholder labels such as "[totals]" or "[source]" are removed.
+ * Markdown links ("[text](url)") are left alone.
+ */
+export function normalizeCitations(text: string): string {
+  return text
+    .replace(/\[n?(\d{1,4})\s*[-–]\s*n?(\d{1,4})\](?!\()/g, (all, a: string, b: string) => {
+      const from = Number(a)
+      const to = Number(b)
+      // Citation numbers stay small; a bracketed year span like [2023-2025] is left as written.
+      if (!(to >= from) || to - from >= MAX_RANGE || to > MAX_CITATION) return all
+      return Array.from({ length: to - from + 1 }, (_, i) => `[${from + i}]`).join('')
+    })
+    .replace(/\[n(\d{1,4})\](?!\()/g, '[$1]')
+    .replace(/ ?\[(?:totals?|sources?|source|n|citation)\](?!\()/gi, '')
+}
+
 /**
  * Answers one question for the user, scoped to the clients the user may see (or to one client when clientId is
  * given, which must be in that list). Read-only, except that a Teams chat may propose a save (see createSaveTool).
@@ -191,8 +214,10 @@ export async function askShadowWith(deps: AskDeps, user: AppUser, question: stri
     buildSystemPrompt({
       userName: user.name,
       today: formatCitationDate(deps.now().toISOString(), timeZone),
+      time: clockTime(deps.now(), timeZone),
       clients: scope.clients,
       fixedClient,
+      user: promptUser(user),
     }),
     ASK_SAFETY_RULE,
     ...(o.teams ? [TEAMS_CHAT_RULE] : []),
@@ -227,7 +252,7 @@ export async function askShadowWith(deps: AskDeps, user: AppUser, question: stri
   })
 
   const allowedHost = o.allowedHost === undefined ? defaultAllowedHost() : (o.allowedHost?.toLowerCase() ?? null)
-  const answer = sanitizeAnswer(result.text, allowedHost).trim()
+  const answer = normalizeCitations(sanitizeAnswer(result.text, allowedHost)).trim()
   const used = new Set(citedNumbers(answer))
   const citations = registry
     .all()

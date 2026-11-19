@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AppUser } from '@/lib/auth/types'
-import type { ClientDetail, ConversationItem, DocumentItem, MeetingItem } from '@/lib/data/types'
+import type { ActivityItem, ClientDetail, ClientListItem, ConversationItem, DocumentItem, MeetingItem, MessageItem } from '@/lib/data/types'
+import type { FollowUpView } from '@/lib/followups/types'
 import { createCitationRegistry } from './citations'
 import type { ChatScope } from './scope'
 import type { AgentStore, MessageHit } from './store'
@@ -185,6 +186,17 @@ describe('getTickets / getFiles / getMeetings / getClientProfile', () => {
     expect(listConversations).not.toHaveBeenCalled()
   })
 
+  it('listTicketsAcross filters by tag (in the query) and by opened date', async () => {
+    const scope: ChatScope = { clients: [{ id: 'c1', name: 'DTRH', accountant: 'Asha' }], fixedClientId: null, allClients: false }
+    const recent = { ...ticket, id: 'new', openedAt: new Date(Date.now() - 2 * 3_600_000).toISOString() }
+    const old = { ...ticket, id: 'old', openedAt: '2026-01-01T00:00:00Z' }
+    const listConversations = vi.fn(async () => [recent, old])
+    const { tools } = setup(scope, { listConversations })
+    const out = await run(tools.listTicketsAcross, { tag: 'complaint', openedInLastDays: 7 })
+    expect(listConversations).toHaveBeenCalledWith(user, { status: 'open', tag: 'complaint' })
+    expect(out.items.map((i: { citation: { id: string } }) => i.citation.id)).toEqual(['new'])
+  })
+
   it('getFiles filters by words and cites the file name', async () => {
     const listDocuments = vi.fn(async () => [doc('f1', 'HDFC Bank Statement Oct.pdf'), doc('f2', 'Sales Oct.xlsx')])
     const { tools } = setup(fixedC1, { listDocuments })
@@ -231,6 +243,91 @@ describe('getTickets / getFiles / getMeetings / getClientProfile', () => {
     const a = await run(tools.searchMessages, { query: 'gst' })
     const b = await run(tools.getTickets, {})
     expect([a.items[0].n, b.items[0].n]).toEqual([1, 2])
+  })
+})
+
+describe('portfolio, activity, messages, follow-ups and team tools', () => {
+  const scope: ChatScope = {
+    clients: [
+      { id: 'c1', name: 'Down The Rabbit Hole', accountant: 'Asha', openTickets: 1 },
+      { id: 'c2', name: 'Ayurpet', accountant: 'Ravi', openTickets: 0 },
+    ],
+    fixedClientId: null,
+    allClients: false,
+  }
+  const client = (p: Partial<ClientListItem> & { id: string; name: string }): ClientListItem => ({
+    legalName: null, status: 'active', dealStage: null, vaId: 'va1', vaName: 'Asha', whatsappGroupName: null, councilEnabled: true,
+    parentClientId: null, serviceScore: 80, moodScore: 70, serviceDelta: 0, moodDelta: 0, scoreComputedAt: null, lastMessageAt: null,
+    unansweredCount: 0, worstLagMinutes: null, openTickets: 0, openEscalations: 0, ...p,
+  })
+
+  it('clientsOverview sorts by attention, keeps only clients in scope, and gives totals', async () => {
+    const listClients = vi.fn(async () => [
+      client({ id: 'c1', name: 'Down The Rabbit Hole', serviceScore: 90 }),
+      client({ id: 'c2', name: 'Ayurpet', vaName: 'Ravi', serviceScore: 40, unansweredCount: 2, worstLagMinutes: 130, openTickets: 3 }),
+      client({ id: 'cX', name: 'Not mine' }),
+    ])
+    const { tools } = setup(scope, { listClients })
+    const out = await run(tools.clientsOverview, {})
+    expect(listClients).toHaveBeenCalledWith(user, { status: 'active' })
+    expect(out.items.map((i: { client: string }) => i.client)).toEqual(['Ayurpet', 'Down The Rabbit Hole'])
+    expect(out.totals).toEqual({ openTickets: 3, openEscalations: 0, clientsWaitingForReply: 1, averageServiceScore: 65, notScoredYet: 0 })
+    expect(out.items[0].citation).toMatchObject({ kind: 'client', id: 'c2', link: '/clients/c2' })
+    const asha = await run(tools.clientsOverview, { accountant: 'asha' })
+    expect(asha.items.map((i: { client: string }) => i.client)).toEqual(['Down The Rabbit Hole'])
+  })
+
+  it('recentMessages returns the latest messages oldest first, masked and cited', async () => {
+    const msg = (id: string, at: string, body: string, fromTeam = false): MessageItem => ({
+      id, waMessageId: id, at, body, senderName: fromTeam ? 'Asha' : 'Ravi', direction: fromTeam ? 'outgoing' : 'incoming',
+      storedDirection: null, fromTeam, messageType: 'text', conversationId: null,
+    })
+    const listMessages = vi.fn(async () => [msg('m2', '2026-11-18T10:00:00Z', 'OTP is 445566', true), msg('m1', '2026-11-18T09:00:00Z', 'hello')])
+    const { tools } = setup(scope, { listMessages })
+    const out = await run(tools.recentMessages, { clientId: 'c1', limit: 2 })
+    expect(listMessages).toHaveBeenCalledWith(user, 'c1', { limit: 2 })
+    expect(out.items.map((i: { citation: { id: string } }) => i.citation.id)).toEqual(['m1', 'm2'])
+    expect(out.items[1]).toMatchObject({ from: 'team' })
+    expect(out.items[1].text).not.toContain('445566')
+    expect((await run(tools.recentMessages, { clientId: 'cX' })).error).toMatch(/not in your list/)
+  })
+
+  it('recentActivity keeps clients in scope, maps documents to file citations, and counts by kind', async () => {
+    const act = (id: string, kind: ActivityItem['kind'], clientId: string): ActivityItem => ({
+      kind, id, at: '2026-11-19T05:00:00Z', clientId, clientName: clientId === 'c1' ? 'Down The Rabbit Hole' : 'Other', title: `${kind} ${id}`, detail: null, link: null,
+    })
+    const listRecentActivity = vi.fn(async () => [act('d1', 'document', 'c1'), act('m1', 'message', 'c2'), act('x1', 'message', 'cX')])
+    const { tools } = setup(scope, { listRecentActivity })
+    const out = await run(tools.recentActivity, { hours: 12 })
+    expect(listRecentActivity).toHaveBeenCalledWith(user, { sinceHours: 12, limit: 200, clientOnly: true })
+    expect(out.byKind).toEqual({ document: 1, message: 1 })
+    expect(out.items.map((i: { kind: string }) => i.kind)).toEqual(['file', 'message'])
+    expect(out.items[0].citation).toMatchObject({ kind: 'file', link: '/clients/c1#file-d1' })
+  })
+
+  it('getFollowUps: one client lists its open items; without a client, due items in scope', async () => {
+    const fu = (id: string, clientId: string, kind: FollowUpView['kind']): FollowUpView => ({
+      id, clientId, clientName: clientId, kind, item: `item ${id}`, status: 'open', dueAt: null, createdAt: '2026-11-18T05:00:00Z',
+      sourceAt: '2026-11-18T04:00:00Z', sourceSender: 'Asha', vaId: 'va1', vaName: 'Asha', conversationId: null, reminderCount: 0,
+      resolvedAt: null, resolvedBy: null,
+    })
+    const listFollowUps = vi.fn(async () => [fu('f1', 'c1', 'document'), fu('f2', 'c1', 'promise')])
+    const listDueFollowUps = vi.fn(async () => [fu('f3', 'c2', 'promise'), fu('f4', 'cX', 'promise')])
+    const { tools } = setup(scope, { listFollowUps, listDueFollowUps })
+    const one = await run(tools.getFollowUps, { clientId: 'c1', kind: 'document' })
+    expect(listFollowUps).toHaveBeenCalledWith(user, 'c1', { status: 'open' })
+    expect(one.items.map((i: { item: string }) => i.item)).toEqual(['item f1'])
+    const due = await run(tools.getFollowUps, {})
+    expect(due.items.map((i: { item: string }) => i.item)).toEqual(['item f3'])
+  })
+
+  it('teamOverview exists only for Admins and Engineers (not in view as)', () => {
+    expect('teamOverview' in setup(scope).tools).toBe(false) // senior accountant
+    const make = (u: AppUser) =>
+      createChatTools({ user: u, scope, registry: createCitationRegistry(1), timeZone: 'Asia/Kolkata', deps: { store: fakeStore(), embedQuery: async () => null } })
+    expect('teamOverview' in make({ ...user, role: 'admin', vaId: null })).toBe(true)
+    expect('teamOverview' in make({ ...user, role: 'engineer', vaId: null })).toBe(true)
+    expect('teamOverview' in make({ ...user, role: 'engineer', vaId: null, viewingAs: { vaId: 'va1', name: 'Asha' } })).toBe(false)
   })
 })
 

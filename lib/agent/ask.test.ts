@@ -9,7 +9,7 @@ import type { ChatScope } from './scope'
 const state = vi.hoisted(() => ({ db: null as unknown }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminSupabase: () => state.db }))
 
-import { ASK_SAFETY_RULE, askShadowWith, defaultAskDeps, EMPTY_QUESTION, sanitizeAnswer, TEAMS_CHAT_RULE, type AskDeps } from './ask'
+import { ASK_SAFETY_RULE, askShadowWith, defaultAskDeps, EMPTY_QUESTION, normalizeCitations, sanitizeAnswer, TEAMS_CHAT_RULE, type AskDeps } from './ask'
 
 const ZWSP = String.fromCharCode(0x200b)
 
@@ -204,6 +204,16 @@ describe('askShadowWith', () => {
     const outside = await run({ clientId: 'c2', title: 'Call', source: 'this_message' })
     expect(outside.save).toBeUndefined()
     expect(outside.text).toMatch(/not in your list/)
+  })
+
+  it('repairs citation ranges and drops placeholder labels, so the sources still list', async () => {
+    expect(normalizeCitations('All on Nirved [1-3]. Total 89 tickets [totals]. Items [n4-n5] and [n6].')).toBe(
+      'All on Nirved [1][2][3]. Total 89 tickets. Items [4][5] and [6].',
+    )
+    expect(normalizeCitations('See [the docs](https://x.test/a) [2-1] [1-100]')).toBe('See [the docs](https://x.test/a) [2-1] [1-100]')
+    expect(normalizeCitations('Returns for [2023-2025] are filed.')).toBe('Returns for [2023-2025] are filed.')
+    const r = await askShadowWith(testDeps('Three tickets [1-3].'), asha, 'tickets?')
+    expect(r.citations.map((c) => c.n)).toEqual([1, 2, 3])
   })
 
   it('rejects an empty question before calling the model', async () => {

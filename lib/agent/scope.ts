@@ -2,11 +2,12 @@
 import { z } from 'zod'
 
 /** A client the user may ask about. accountant and openTickets help the model answer "Puneeth's clients" questions. */
-export type ScopedClient = { id: string; name: string; accountant?: string | null; openTickets?: number }
+export type ScopedClient = { id: string; name: string; accountant?: string | null; openTickets?: number; inactive?: boolean }
 
-/** ScopedClient from a lib/data client list item. */
-export function toScopedClient(c: { id: string; name: string; vaName: string | null; openTickets: number }): ScopedClient {
-  return { id: c.id, name: c.name, accountant: c.vaName, openTickets: c.openTickets }
+/** ScopedClient from a lib/data client list item (status "Inactive" = churned or parked). */
+export function toScopedClient(c: { id: string; name: string; vaName: string | null; openTickets: number; status?: string | null }): ScopedClient {
+  const inactive = (c.status ?? '').trim().toLowerCase() === 'inactive'
+  return { id: c.id, name: c.name, accountant: c.vaName, openTickets: c.openTickets, ...(inactive ? { inactive } : {}) }
 }
 
 /** Clients whose accountant name contains every word of `accountant` (case-insensitive). Blank: all clients. */
