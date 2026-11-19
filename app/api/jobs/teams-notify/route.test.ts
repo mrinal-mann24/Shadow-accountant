@@ -6,6 +6,9 @@ vi.mock('@/lib/teams/notify', () => ({
   runTeamsNotifyJob: (o: unknown) => run(o),
 }))
 
+const prune = vi.fn<(before: string) => Promise<number>>(async () => 0)
+vi.mock('@/lib/teams/chat-store', () => ({ supabaseTeamsChatStore: { prune: (before: string) => prune(before) } }))
+
 import { GET, POST } from './route'
 
 const req = (auth?: string) =>
@@ -37,6 +40,27 @@ describe('/api/jobs/teams-notify', () => {
     run.mockResolvedValue(ok(false))
     expect((await POST(req('Bearer abc'))).status).toBe(200)
     expect(run).toHaveBeenLastCalledWith(expect.objectContaining({ write: true }))
+  })
+
+  it('deletes old Teams chat rows only on a write run, and a prune error never fails the job', async () => {
+    vi.stubEnv('CRON_SECRET', 'abc')
+    vi.stubEnv('JOBS_WRITE_ENABLED', 'true')
+    vi.stubEnv('JOBS_WRITE_ONLY', 'council')
+    prune.mockClear()
+    run.mockResolvedValue(ok(true))
+    await GET(req('Bearer abc'))
+    expect(prune).not.toHaveBeenCalled()
+
+    vi.stubEnv('JOBS_WRITE_ONLY', 'teams-notify')
+    run.mockResolvedValue(ok(false))
+    prune.mockRejectedValueOnce(new Error('db down'))
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const r = await GET(req('Bearer abc'))
+    err.mockRestore()
+    expect(r.status).toBe(200)
+    expect(prune).toHaveBeenCalledTimes(1)
+    const before = Date.parse(prune.mock.calls[0][0])
+    expect(Date.now() - before).toBeGreaterThan(6.9 * 24 * 60 * 60_000)
   })
 
   it('500 when the job throws or reports a fatal error', async () => {

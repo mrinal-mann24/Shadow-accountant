@@ -2,7 +2,7 @@
 // Every dependency is injected (see BotDeps) so this file has no I/O of its own and is fully unit tested.
 // The route (app/api/teams/messages) verifies the JWT first and builds the real deps.
 import type { AppUser } from '@/lib/auth/types'
-import { ForbiddenError } from '@/lib/auth/roles'
+import { ForbiddenError, ViewAsReadOnlyError } from '@/lib/auth/roles'
 import type { FollowUpAction, FollowUpCardData, FollowUpView } from '@/lib/followups/types'
 import {
   cardAttachment,
@@ -13,16 +13,36 @@ import {
   helpCard,
   parseCardAction,
   parseFollowUpAction,
+  parseSaveAction,
   reminderCard,
+  SAVE_VERB,
+  saveCard,
   ticketCard,
   type FollowUpHandled,
 } from './cards'
+import {
+  cleanLongText,
+  historyTurns,
+  MAX_MESSAGE_CHARS,
+  MEMORY_TURNS,
+  MEMORY_WINDOW_MS,
+  NEW_CHAT,
+  pendingExpired,
+  textToSave,
+  type ChatRow,
+  type PendingSave,
+  type TeamsChatStore,
+} from './chat'
+import type { SaveTranscriptInput } from '@/lib/data/transcripts'
+import { maskCredentials } from '@/lib/ai/redact'
 import type {
   Activity,
   AdaptiveCard,
   AskShadow,
   CardActionData,
   CardHandled,
+  DeliveryTarget,
+  PersonalChat,
   NotificationAction,
   NotificationKind,
   OutgoingActivity,
@@ -61,6 +81,10 @@ export type BotDeps = {
   ask: AskShadow
   data: BotData
   followUps: BotFollowUps
+  /** 1:1 chat memory and pending saves (table teams_chat). */
+  chat: TeamsChatStore
+  /** lib/data saveClientTranscript: checks the user's access to the client again. */
+  saveTranscript: (user: AppUser, input: SaveTranscriptInput) => Promise<{ id: string }>
   siteUrl: string
   tenantId: string
   now?: () => Date
@@ -73,7 +97,14 @@ export type BotReply = { status: number; body?: unknown }
 export const NOT_SET_UP = 'Your Teams account is not set up in Shadow yet. Ask an Admin to add you.'
 export const REFUSAL = 'You cannot do this for this client.'
 export const AI_FAILED = 'Sorry, I could not answer that right now.'
-export const MAX_QUESTION = 1000
+/** Longest 1:1 message read (a pasted transcript). */
+export const MAX_QUESTION = MAX_MESSAGE_CHARS
+export const NEW_CHAT_DONE = 'Started a new chat. I have forgotten our earlier messages.'
+export const NOTHING_TO_SAVE = 'I could not find the text to save. Paste the transcript or notes in one message and say which client.'
+export const SAVE_FAILED = 'Sorry, I could not save that right now. Please try again.'
+export const SAVE_GONE = 'This was already saved or cancelled.'
+export const SAVE_EXPIRED = 'This save request has expired. Paste the text again and ask me to save it.'
+export const NO_ACCOUNTANT_CHAT = 'This accountant has not opened the Shadow chat in Teams yet. Ask them to open Shadow and say hi.'
 
 export const DIRECT_ONLY =
   'To ask about your clients, message me directly (1:1 chat). I do not answer questions in shared channels.'
@@ -130,6 +161,7 @@ export function resetBotState(): void {
   handledActivities.clear()
   questionTimes.clear()
   memberCache.clear()
+  knownChats.clear()
 }
 
 function nowMs(deps: BotDeps): number {
@@ -285,6 +317,73 @@ async function identify(activity: Activity, deps: BotDeps): Promise<Who> {
   }
 }
 
+type AccountantDest = {
+  target: DeliveryTarget
+  /** True for the accountant's 1:1 chat (no @mention needed), false for their linked channel. */
+  personal: boolean
+  accountant: Awaited<ReturnType<TeamsStore['accountants']>>[number] | undefined
+}
+
+/** The accountant's 1:1 chat with Shadow (by their vas email), else their linked channel, else null. */
+async function accountantTarget(deps: BotDeps, vaId: string): Promise<AccountantDest | null> {
+  const [accountants, chats, map] = await Promise.all([deps.store.accountants(), deps.store.personalChats(), deps.store.channels()])
+  const accountant = accountants.find((a) => a.vaId === vaId)
+  const email = accountant?.email?.trim().toLowerCase()
+  const chat = email ? chats[email] : undefined
+  if (chat) return { target: { id: chat.conversationId, name: accountant?.name ?? null, serviceUrl: chat.serviceUrl }, personal: true, accountant }
+  const channel = map?.accountants[vaId]
+  if (map && channel) return { target: { id: channel.id, name: channel.name, serviceUrl: map.serviceUrl }, personal: false, accountant }
+  return null
+}
+
+/** email -> 'conversationId|serviceUrl' already saved by this server instance, so a known chat costs no reads. */
+const knownChats = new Map<string, string>()
+
+/** What a person gets in their 1:1 chat, by role. Shown once, when Shadow first learns their chat. */
+export function setupLine(user: AppUser): string {
+  if (user.role === 'senior_accountant') {
+    return "You are set up. I will send you new tickets, reminders, client files and follow-ups for your clients here. Ask me anything about them, or type help."
+  }
+  return 'You are set up. I will send you escalations (clients waiting too long, repeat asks, missed promises) here. Ask me anything about any client, or type help.'
+}
+
+/**
+ * Saves the person's 1:1 chat with Shadow (settings 'teams_personal') when it is new or has changed, so cards can be
+ * sent to them. Returns true the first time. Best effort: a failure is logged and the chat is tried again next time.
+ */
+async function rememberPersonalChat(activity: Activity, deps: BotDeps, email: string, user: AppUser): Promise<boolean> {
+  if (activity.conversation.conversationType !== 'personal') return false
+  const key = email.trim().toLowerCase()
+  const value = `${activity.conversation.id}|${activity.serviceUrl}`
+  if (knownChats.get(key) === value) return false
+  const matches = (c: PersonalChat | undefined) =>
+    !!c && c.conversationId === activity.conversation.id && c.serviceUrl === activity.serviceUrl
+  try {
+    const existing = (await deps.store.personalChats())[key]
+    const isNew = !existing
+    if (!matches(existing)) {
+      const chat: PersonalChat = {
+        conversationId: activity.conversation.id,
+        serviceUrl: activity.serviceUrl,
+        name: user.name,
+        at: (deps.now ?? (() => new Date()))().toISOString(),
+      }
+      // The settings write is read-modify-write: another person registering at the same moment can overwrite it.
+      // Read it back and write once more if it is missing; only a confirmed chat is cached as known.
+      await deps.store.savePersonalChat(key, chat)
+      if (!matches((await deps.store.personalChats())[key])) {
+        await deps.store.savePersonalChat(key, chat)
+        if (!matches((await deps.store.personalChats())[key])) return isNew // tried again on the next message
+      }
+    }
+    remember(knownChats, key, value, MAP_MAX)
+    return isNew
+  } catch (e) {
+    console.error('[teams-bot] save personal chat failed:', errorMessage(e))
+    return false
+  }
+}
+
 /** When the linked team now arrives on another serviceUrl (region move), store the new one so posting keeps working. */
 function refreshServiceUrl(activity: Activity, deps: BotDeps): void {
   const teamId = activity.channelData?.team?.id
@@ -311,6 +410,13 @@ export async function handleActivity(activity: Activity, deps: BotDeps): Promise
     const botId = activity.recipient?.id
     if (botId && (activity.membersAdded ?? []).some((m) => m.id === botId)) {
       await deps.connector.send(activity.serviceUrl, activity.conversation.id, cardAttachment(helpCard({ siteUrl: deps.siteUrl })))
+      // Installed in someone's 1:1 chat (by them or by an Admin policy): remember it, so cards can reach them.
+      if (activity.conversation.conversationType === 'personal') {
+        const who = await identify(activity, deps)
+        if (who.kind === 'user' && (await rememberPersonalChat(activity, deps, who.email, who.user))) {
+          await deps.connector.send(activity.serviceUrl, activity.conversation.id, plain(setupLine(who.user)))
+        }
+      }
     }
     return { status: 200 }
   }
@@ -328,6 +434,7 @@ function refMatchesTicket(data: CardActionData): boolean {
 // posts to other channels and refreshing stored card copies run after it (deps.defer).
 async function handleCardAction(activity: Activity, deps: BotDeps): Promise<BotReply> {
   if (isFollowUpVerb(activity.value)) return handleFollowUpAction(activity, deps)
+  if (isSaveVerb(activity.value)) return handleSaveAction(activity, deps)
   const data = parseCardAction(activity.value)
   if (!data || !refMatchesTicket(data)) return invokeBadRequest(INVALID_CARD)
 
@@ -371,15 +478,14 @@ async function handleCardAction(activity: Activity, deps: BotDeps): Promise<BotR
         if (current.vaId === data.vaId) return invokeMessage(`This ticket is already with ${target.name}.`)
         await deps.data.reassignTicket(user, data.ticketId, data.vaId)
         note = `Reassigned to ${target.name}`
-        const map = await deps.store.channels()
-        const channel = map?.accountants[data.vaId]
-        if (!map || !channel) {
-          note += ' (no Teams channel is linked for them)'
+        const dest = await accountantTarget(deps, data.vaId)
+        if (!dest) {
+          note += ' (they have not opened the Shadow chat in Teams yet)'
         } else {
           const ticketId = data.ticketId
           later(deps, 'reassign post', async () => {
             const t = await deps.store.ticketForCard(ticketId)
-            if (t) await deps.connector.send(map.serviceUrl, channel.id, cardAttachment(ticketCard(t, { siteUrl: deps.siteUrl })))
+            if (t) await deps.connector.send(dest.target.serviceUrl, dest.target.id, cardAttachment(ticketCard(t, { siteUrl: deps.siteUrl })))
           })
         }
         break
@@ -388,14 +494,15 @@ async function handleCardAction(activity: Activity, deps: BotDeps): Promise<BotR
         if (user.role !== 'admin') return invokeMessage(REFUSAL)
         const t = await deps.store.ticketForCard(data.ticketId)
         if (!t) return invokeMessage(NOT_FOUND)
-        const map = await deps.store.channels()
-        const channel = t.vaId ? map?.accountants[t.vaId] : undefined
-        if (!map || !channel) return invokeMessage('No Teams channel is linked for this accountant.')
-        const acc = (await deps.store.accountants()).find((a) => a.vaId === t.vaId)
+        const dest = t.vaId ? await accountantTarget(deps, t.vaId) : null
+        if (!dest) return invokeMessage(NO_ACCOUNTANT_CHAT)
+        const acc = dest.accountant
         // Its own ref, so clicks on this reminder are not recorded on the real reminder row.
         const card = reminderCard(t, { siteUrl: deps.siteUrl, waitingMinutes: waitingMinutes(t, now), ref: `${data.ref}#ping` })
         const out: OutgoingActivity = cardAttachment(card)
-        if (acc?.teamsUserId) {
+        if (dest.personal) {
+          out.text = 'An Admin asked you to pick this up.'
+        } else if (acc?.teamsUserId) {
           const name = acc.name.replace(/[<>]/g, '')
           const mention = `<at>${name}</at>`
           out.text = `${mention} please pick this up`
@@ -405,7 +512,7 @@ async function handleCardAction(activity: Activity, deps: BotDeps): Promise<BotR
         later(deps, 'ping post', async () => {
           let reply = `Accountant pinged by ${by}`
           try {
-            await deps.connector.send(map.serviceUrl, channel.id, out)
+            await deps.connector.send(dest.target.serviceUrl, dest.target.id, out)
           } catch (e) {
             console.error('[teams-bot] ping post failed:', errorMessage(e))
             reply = PING_FAILED
@@ -542,6 +649,8 @@ async function handleMessage(activity: Activity, deps: BotDeps): Promise<BotRepl
     return { status: 200 }
   }
   const { user, email } = who
+  // First message in a 1:1 chat: remember it, so tickets and alerts can be sent here.
+  if (await rememberPersonalChat(activity, deps, email, user)) await reply(plain(setupLine(user)))
 
   if (text === '' || /^help$/i.test(text)) {
     await reply(cardAttachment(helpCard({ siteUrl: deps.siteUrl })))
@@ -563,19 +672,138 @@ async function handleMessage(activity: Activity, deps: BotDeps): Promise<BotRepl
     return { status: 200 }
   }
 
-  const question = text.slice(0, MAX_QUESTION)
-  deps.defer(async () => {
-    let out: string
+  if (NEW_CHAT.test(text)) {
     try {
-      const r = await deps.ask(user, question)
+      await deps.chat.clear(email)
+      await reply(plain(NEW_CHAT_DONE))
+    } catch (e) {
+      console.error('[teams-bot] chat clear failed:', errorMessage(e))
+      await reply(plain(FAILED))
+    }
+    return { status: 200 }
+  }
+
+  // Keep line breaks: a pasted transcript must be saved as it was sent. Credentials are masked before anything is
+  // stored (memory, pending save) or sent to the model (CLAUDE.md: never store client passwords).
+  const message = maskCredentials(cleanLongText(activity.text).slice(0, MAX_QUESTION) || text)
+  const now = (deps.now ?? (() => new Date()))()
+  deps.defer(async () => {
+    let history: ChatRow[] = []
+    try {
+      history = await deps.chat.recentTurns(email, new Date(now.getTime() - MEMORY_WINDOW_MS).toISOString(), MEMORY_TURNS)
+    } catch (e) {
+      console.error('[teams-bot] chat memory read failed:', errorMessage(e)) // answer without memory
+    }
+    // The user turn is kept even when the AI then fails, so "save that" still finds a pasted transcript.
+    try {
+      await deps.chat.addTurns(email, [{ kind: 'user', content: message }])
+    } catch (e) {
+      console.error('[teams-bot] chat memory write failed:', errorMessage(e))
+    }
+
+    let out: string
+    let answerText = ''
+    let card: AdaptiveCard | null = null
+    try {
+      const r = await deps.ask(user, message, { history: historyTurns(history), teams: true })
+      answerText = r.text
       out = formatAnswer(deps.siteUrl, r)
+      if (r.save) {
+        const content = textToSave(r.save, message, history)
+        if (!content) {
+          out += `\n\n${NOTHING_TO_SAVE}`
+        } else {
+          const meta = { clientId: r.save.clientId, clientName: r.save.clientName, title: r.save.title, meetingDate: r.save.meetingDate }
+          try {
+            const pendingId = await deps.chat.addPending(email, content, meta)
+            card = saveCard({ pendingId, ...meta, content }, { siteUrl: deps.siteUrl })
+          } catch (e) {
+            console.error('[teams-bot] pending save failed:', errorMessage(e))
+            out += `\n\n${SAVE_FAILED}`
+          }
+        }
+      }
     } catch (e) {
       console.error('[teams-bot] ask failed:', errorMessage(e))
       out = AI_FAILED
     }
     await reply(plain(out))
+    if (card) await reply(cardAttachment(card))
+    if (answerText) {
+      try {
+        await deps.chat.addTurns(email, [{ kind: 'assistant', content: answerText }])
+      } catch (e) {
+        console.error('[teams-bot] chat memory write failed:', errorMessage(e))
+      }
+    }
   })
   return { status: 200 }
+}
+
+// ---------------------------------------------------------------- save card clicks
+
+function isSaveVerb(value: unknown): boolean {
+  const action = (value as { action?: { verb?: unknown } } | null)?.action
+  return typeof action === 'object' && action !== null && action.verb === SAVE_VERB
+}
+
+function saveError(e: unknown): string {
+  if (e instanceof ViewAsReadOnlyError) return e.message
+  if (e instanceof ForbiddenError) return REFUSAL
+  console.error('[teams-bot] save failed:', errorMessage(e))
+  return SAVE_FAILED
+}
+
+// Only the person who asked can press Save (the pending row is looked up by their email). The row is taken (deleted)
+// before saving, so a second click finds nothing; when the save itself fails the text is kept as a new pending row
+// and the answer is a fresh card to try again.
+async function handleSaveAction(activity: Activity, deps: BotDeps): Promise<BotReply> {
+  const data = parseSaveAction(activity.value)
+  if (!data) return invokeBadRequest(INVALID_CARD)
+  const who = await identify(activity, deps)
+  if (who.kind === 'unknown') return invokeMessage(NOT_SET_UP)
+  if (who.kind === 'failed') return invokeMessage(LOOKUP_FAILED)
+  const { user, email } = who
+  const now = (deps.now ?? (() => new Date()))()
+  const at = now.toISOString()
+
+  let pending: PendingSave | null
+  try {
+    pending = await deps.chat.takePending(data.pendingId, email)
+  } catch (e) {
+    console.error('[teams-bot] take pending failed:', errorMessage(e))
+    return invokeMessage(SAVE_FAILED)
+  }
+  if (!pending) return invokeMessage(SAVE_GONE)
+  const view = { pendingId: pending.id, ...pending.meta, content: pending.content }
+
+  if (data.action === 'cancel') return invokeCard(saveCard(view, { siteUrl: deps.siteUrl, handled: { action: 'cancelled', by: user.name, at } }))
+  if (pendingExpired(pending, now)) return invokeMessage(SAVE_EXPIRED)
+
+  try {
+    await deps.saveTranscript(user, {
+      clientId: pending.meta.clientId,
+      title: pending.meta.title,
+      meetingDate: pending.meta.meetingDate,
+      transcript: pending.content,
+      now,
+    })
+  } catch (e) {
+    const message = saveError(e)
+    if (e instanceof ForbiddenError) return invokeMessage(message)
+    try {
+      const retryId = await deps.chat.addPending(email, pending.content, pending.meta)
+      return invokeCard(saveCard({ ...view, pendingId: retryId }, { siteUrl: deps.siteUrl }))
+    } catch {
+      return invokeMessage(message)
+    }
+  }
+  return invokeCard(
+    saveCard(view, {
+      siteUrl: deps.siteUrl,
+      handled: { action: 'saved', by: user.name, at, note: 'It now shows under Meetings on the client page and in Ask Shadow.' },
+    }),
+  )
 }
 
 /** Removes a channel from every target. True when it was linked anywhere. */

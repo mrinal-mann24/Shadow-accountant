@@ -263,18 +263,25 @@ export function helpCard(o: { siteUrl: string }): AdaptiveCard {
     [
       heading('Shadow Accountant in Teams'),
       text(
-        'I post new tickets, reminders when a client is waiting, escalations and new client files to your channels. ' +
-          'Use the buttons on a card to start, close or reassign a ticket.',
+        'I send you everything here, in this chat: new tickets, reminders when a client is waiting, client files and ' +
+          'follow-ups for your clients (Senior Accountants), and escalations (Admins). Use the buttons on a card to ' +
+          'start, close or reassign a ticket.',
       ),
-      text('Commands', { weight: 'Bolder', spacing: 'Medium' }),
+      text('In this chat', { weight: 'Bolder', spacing: 'Medium' }),
       facts([
-        ['link <accountant email>', 'Post this accountant’s tickets to this channel (Admin or Engineer, typed in the channel)'],
-        ['link escalations', 'Post escalations to this channel (Admin or Engineer, typed in the channel)'],
-        ['unlink', 'Stop posting to this channel'],
-        ['channels', 'Show which channels are linked'],
+        ['Ask', 'Anything about your clients, for example "open tickets for Puneeth\'s clients". Answers come with sources.'],
+        ['General', 'Accounting, GST or Tally questions, or help drafting a message.'],
+        ['Save', 'Paste a call transcript or meeting notes and say "save this for <client>". Press Save on the card to store it.'],
+        ['new chat', 'Forget our earlier messages and start fresh'],
         ['help', 'Show this card'],
       ]),
-      text('Ask any question about your clients and I will answer with sources.', { spacing: 'Medium' }),
+      text('Team channels (optional, Admin or Engineer, typed in the channel)', { weight: 'Bolder', spacing: 'Medium' }),
+      facts([
+        ['link <accountant email>', 'Also post this accountant’s tickets to this channel, for anyone who has not opened this chat'],
+        ['link escalations', 'Post escalations here when no Admin has opened this chat'],
+        ['unlink', 'Stop posting to this channel'],
+        ['channels', 'Show which channels are linked'],
+      ]),
     ],
     [openUrl('Open Shadow', base(o.siteUrl))],
   )
@@ -433,6 +440,76 @@ const followUpSchema = z.object({
     }),
   }),
 })
+
+// ---------------------------------------------------------------- save card (Teams 1:1 chat)
+
+export const SAVE_VERB = 'save'
+const SAVE_PREVIEW = 400
+
+export type SaveCardView = {
+  pendingId: string
+  clientId: string
+  clientName: string
+  title: string
+  meetingDate: string | null
+  content: string
+}
+
+export type SaveHandled = { action: 'saved' | 'cancelled'; by: string; at: string; note?: string }
+
+/** "Save to <client>?" with a preview of the text and Save / Cancel. After a click it shows who did what instead. */
+export function saveCard(v: SaveCardView, o: { siteUrl: string; handled?: SaveHandled }): AdaptiveCard {
+  const lines = v.content.split('\n').length
+  const body: unknown[] = [
+    heading(`Save to ${safe(v.clientName, MAX_TITLE)}?`),
+    facts([
+      ['Title', safe(v.title, MAX_TITLE)],
+      ['Meeting day', v.meetingDate ? formatDay(v.meetingDate) : 'Today'],
+      ['Size', `${v.content.length.toLocaleString('en-IN')} characters, ${lines} lines`],
+    ]),
+    text(safe(v.content, SAVE_PREVIEW), { isSubtle: true, spacing: 'Medium' }),
+  ]
+  const open = openUrl('Open client', clientUrl(o.siteUrl, v.clientId))
+  if (o.handled) {
+    const by = clip(plainText(o.handled.by || 'someone'), 80)
+    const when = formatIst(o.handled.at)
+    const label = o.handled.action === 'saved' ? `Saved to ${safe(v.clientName, MAX_TITLE)} by ${by}` : `Cancelled by ${by}`
+    body.push(text(`${label}${when ? `, ${when}` : ''}`, { weight: 'Bolder', separator: true, spacing: 'Medium' }))
+    if (o.handled.note) body.push(text(safe(o.handled.note, 300), { isSubtle: true }))
+    return card(body, o.handled.action === 'saved' ? [open] : [])
+  }
+  body.push(text('Nothing is saved until you press Save. Passwords and OTPs are masked.', { isSubtle: true, size: 'Small' }))
+  const button = (title: string, action: 'save' | 'cancel', extra: Record<string, unknown> = {}) => ({
+    type: 'Action.Execute',
+    title,
+    verb: SAVE_VERB,
+    data: { action, pendingId: v.pendingId },
+    ...extra,
+  })
+  return card(body, [button('Save', 'save', { style: 'positive' }), button('Cancel', 'cancel')])
+}
+
+const DAY = new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' })
+
+/** '18 Nov 2026' for a YYYY-MM-DD date (no time zone shift). */
+function formatDay(ymd: string): string {
+  const d = new Date(`${ymd}T00:00:00Z`)
+  return Number.isNaN(d.getTime()) ? ymd : DAY.format(d)
+}
+
+const saveSchema = z.object({
+  action: z.object({
+    type: z.literal('Action.Execute'),
+    verb: z.literal(SAVE_VERB),
+    data: z.object({ action: z.enum(['save', 'cancel']), pendingId: id }),
+  }),
+})
+
+/** The data of a Save card click, or null for anything else. */
+export function parseSaveAction(value: unknown): { action: 'save' | 'cancel'; pendingId: string } | null {
+  const r = saveSchema.safeParse(value)
+  return r.success ? r.data.action.data : null
+}
 
 /** The data of a follow-up card click, or null for anything else (another verb, or a ref of another follow-up). */
 export function parseFollowUpAction(value: unknown): FollowUpCardData | null {

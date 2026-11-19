@@ -20,7 +20,9 @@ vi.mock('@/lib/data', () => ({
   ticketForUser: vi.fn(),
   reassignTicket: vi.fn(),
   followUpAction: (...a: unknown[]) => followUpAction(...a),
+  saveClientTranscript: vi.fn(),
 }))
+vi.mock('@/lib/teams/chat-store', () => ({ supabaseTeamsChatStore: { prune: vi.fn() } }))
 
 import { POST } from './route'
 

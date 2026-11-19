@@ -133,6 +133,8 @@ function fakeTeams(now: () => Date) {
   const store: TeamsStore = {
     channels: async () => structuredClone(MAP),
     saveChannels: async () => {},
+    personalChats: async () => ({}),
+    savePersonalChat: async () => {},
     sentRefs: async (kind, refs) => new Set(refs.filter((r) => rows.has(key(kind, r)))),
     claim: async (r) => {
       if (rows.has(key(r.kind, r.ref_id))) return false
@@ -320,6 +322,14 @@ function botDeps(w: ReturnType<typeof world>): { deps: BotDeps; runDeferred: () 
     store: w.teams.store,
     resolveUser: async (email) => users[email.toLowerCase()] ?? null,
     ask: async () => {
+      throw new Error('not used')
+    },
+    chat: new Proxy({} as BotDeps['chat'], {
+      get: () => async () => {
+        throw new Error('not used')
+      },
+    }),
+    saveTranscript: async () => {
       throw new Error('not used')
     },
     data: {

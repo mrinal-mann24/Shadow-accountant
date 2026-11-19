@@ -1,5 +1,16 @@
 import { assertCronAuth, jobHttpStatus, jobsWriteEnabled, type JobResult } from '@/lib/jobs/guard'
+import { CHAT_RETENTION_MS } from '@/lib/teams/chat'
+import { supabaseTeamsChatStore } from '@/lib/teams/chat-store'
 import { JOB, runTeamsNotifyJob } from '@/lib/teams/notify'
+
+/** Deletes Teams chat memory and pending saves older than 7 days. Best effort: never fails the job. */
+async function pruneChat(now: Date): Promise<void> {
+  try {
+    await supabaseTeamsChatStore.prune(new Date(now.getTime() - CHAT_RETENTION_MS).toISOString())
+  } catch (e) {
+    console.error('[teams-notify] chat prune failed:', e instanceof Error ? e.message : String(e))
+  }
+}
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -15,7 +26,9 @@ async function handle(req: Request): Promise<Response> {
   }
   const write = jobsWriteEnabled(JOB)
   try {
-    const result: JobResult = await runTeamsNotifyJob({ write, now: new Date() })
+    const now = new Date()
+    const result: JobResult = await runTeamsNotifyJob({ write, now })
+    if (write) await pruneChat(now)
     return Response.json(result, { status: jobHttpStatus(result) })
   } catch (e) {
     const failed: JobResult = {

@@ -8,6 +8,7 @@ import type {
   NotificationAction,
   NotificationKind,
   NotificationRow,
+  PersonalChats,
   TeamsChannelMap,
   TeamsChannelRef,
   TeamsStore,
@@ -19,6 +20,8 @@ import type {
 
 export const CHANNELS_KEY = 'teams_channels'
 const CHANNELS_NOTE = 'Shadow Teams bot channel map'
+export const PERSONAL_KEY = 'teams_personal'
+const PERSONAL_NOTE = 'Shadow Teams bot: 1:1 chat of each person, by login email'
 const TABLE = 'teams_notifications'
 const NOTIFICATION_COLS = 'kind, ref_id, client_id, channel_id, activity_id, sent_at, action, action_by, action_at'
 const KINDS: readonly string[] = ['ticket', 'reminder', 'escalation', 'files']
@@ -63,6 +66,28 @@ export function parseChannelMap(value: string | null | undefined): TeamsChannelM
   return { serviceUrl, tenantId, teamId: str(raw.teamId), accountants, escalations: channelRef(raw.escalations) }
 }
 
+/** Parses settings 'teams_personal'. Bad JSON or bad entries are dropped ({} when nothing is valid). */
+export function parsePersonalChats(value: string | null | undefined): PersonalChats {
+  if (!value) return {}
+  let raw: unknown
+  try {
+    raw = JSON.parse(value)
+  } catch {
+    return {}
+  }
+  if (!isObject(raw)) return {}
+  const out: PersonalChats = {}
+  for (const [email, v] of Object.entries(raw)) {
+    if (!isObject(v)) continue
+    const conversationId = str(v.conversationId)
+    const serviceUrl = str(v.serviceUrl)
+    const key = email.trim().toLowerCase()
+    if (!key || !conversationId || !serviceUrl) continue
+    out[key] = { conversationId, serviceUrl, name: str(v.name), at: str(v.at) ?? '' }
+  }
+  return out
+}
+
 function toNotificationRow(r: Database['public']['Tables']['teams_notifications']['Row']): NotificationRow {
   return {
     kind: (KINDS.includes(r.kind) ? r.kind : 'ticket') as NotificationKind,
@@ -104,6 +129,29 @@ export function supabaseTeamsStore(db?: SupabaseClient<Database>): TeamsStore {
       if (res.error) throw new Error(`teams saveChannels: ${res.error.message}`)
     },
 
+    async personalChats() {
+      const { data, error } = await conn().from('settings').select('value').eq('key', PERSONAL_KEY).maybeSingle()
+      if (error) throw new Error(`teams personalChats: ${error.message}`)
+      return parsePersonalChats(data?.value)
+    },
+
+    async savePersonalChat(email, chat) {
+      const key = email.trim().toLowerCase()
+      if (!key) return
+      const d = conn()
+      // Read, change one entry, write. Two people registering at the same moment can overwrite each other's entry;
+      // the bot reads the chat back after saving and writes it again when it is missing (lib/teams/bot.ts).
+      const found = await d.from('settings').select('value').eq('key', PERSONAL_KEY).maybeSingle()
+      if (found.error) throw new Error(`teams savePersonalChat: ${found.error.message}`)
+      const chats = parsePersonalChats(found.data?.value)
+      chats[key] = chat
+      const value = JSON.stringify(chats)
+      const res = found.data
+        ? await d.from('settings').update({ value }).eq('key', PERSONAL_KEY)
+        : await d.from('settings').insert({ key: PERSONAL_KEY, value, note: PERSONAL_NOTE })
+      if (res.error) throw new Error(`teams savePersonalChat: ${res.error.message}`)
+    },
+
     async sentRefs(kind, refIds) {
       const out = new Set<string>()
       const ids = [...new Set(refIds.filter(Boolean))]
@@ -132,8 +180,9 @@ export function supabaseTeamsStore(db?: SupabaseClient<Database>): TeamsStore {
       if (error) throw new Error(`teams release: ${error.message}`)
     },
 
-    async setActivityId(kind, refId, activityId) {
-      const { error } = await conn().from(TABLE).update({ activity_id: activityId }).eq('kind', kind).eq('ref_id', refId)
+    async setActivityId(kind, refId, activityId, channelId) {
+      const patch = channelId ? { activity_id: activityId, channel_id: channelId } : { activity_id: activityId }
+      const { error } = await conn().from(TABLE).update(patch).eq('kind', kind).eq('ref_id', refId)
       if (error) throw new Error(`teams setActivityId: ${error.message}`)
     },
 

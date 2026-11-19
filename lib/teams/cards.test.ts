@@ -286,7 +286,8 @@ describe('helpCard', () => {
   it('lists the commands', () => {
     const s = json(helpCard({ siteUrl: SITE }))
     for (const cmd of ['link <accountant email>', 'link escalations', 'unlink', 'channels', 'help']) expect(s).toContain(cmd)
-    expect(s).toContain('Ask any question about your clients')
+    expect(s).toContain('In this chat')
+    for (const cmd of ['new chat', 'save this for']) expect(s).toContain(cmd)
     expect(s).not.toContain('—')
   })
 })

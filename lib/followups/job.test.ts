@@ -268,6 +268,8 @@ function fakeTeams(o: { map?: TeamsChannelMap | null; claimResult?: boolean } = 
     released: [],
     channels: async () => (o.map === undefined ? MAP : o.map),
     saveChannels: async () => {},
+    personalChats: async () => ({}),
+    savePersonalChat: async () => {},
     sentRefs: async (kind, refs) => new Set(refs.filter((r) => rows.has(key(kind, r)))),
     claim: vi.fn(async (r) => {
       if (o.claimResult === false || rows.has(key(r.kind, r.ref_id))) return false
@@ -706,7 +708,7 @@ describe('Teams sends', () => {
     const e = env({ store: fakeStore({ rows: asks(1) }), teams: fakeTeams({ map }) })
     const res = await run(e)
     expect(e.connector.sent.map((s) => s.conversationId)).toEqual(['ch-esc', 'ch-esc'])
-    expect(res.errors).toEqual([expect.stringMatching(/No Teams channel linked for accountant va1 \(va1\): 1 follow-up card/)])
+    expect(res.errors).toEqual([expect.stringMatching(/Accountant va1 \(va1\) has not opened Shadow in Teams: 1 follow-up card/)])
   })
 
   it('at most 25 cards a run; a half-sent pair is finished next run', async () => {

@@ -9,7 +9,7 @@ import type { ChatScope } from './scope'
 const state = vi.hoisted(() => ({ db: null as unknown }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminSupabase: () => state.db }))
 
-import { ASK_SAFETY_RULE, askShadowWith, defaultAskDeps, EMPTY_QUESTION, sanitizeAnswer, type AskDeps } from './ask'
+import { ASK_SAFETY_RULE, askShadowWith, defaultAskDeps, EMPTY_QUESTION, sanitizeAnswer, TEAMS_CHAT_RULE, type AskDeps } from './ask'
 
 const ZWSP = String.fromCharCode(0x200b)
 
@@ -137,6 +137,73 @@ describe('askShadowWith', () => {
 
   it('allows only relative links when no host is known', () => {
     expect(sanitizeAnswer('[a](/x) [b](https://shadow.example.com/y)', null)).toBe(`[a](/x) b`)
+  })
+
+  it('Teams chat: sends earlier turns first, adds the Teams rule and the proposeSave tool, and keeps long messages', async () => {
+    let tools: ToolSet = {}
+    let messages: unknown
+    let instructions = ''
+    const deps: AskDeps = {
+      ...testDeps('ok'),
+      generate: async (o) => {
+        tools = o.tools
+        messages = o.messages
+        instructions = o.instructions
+        expect(o.maxOutputTokens).toBe(2000)
+        return { text: 'ok' }
+      },
+    }
+    const long = 'y'.repeat(10_000)
+    await askShadowWith(deps, asha, long, {
+      teams: true,
+      history: [
+        { role: 'user', text: 'Open tickets for Alpha?' },
+        { role: 'assistant', text: 'Two are open.' },
+      ],
+    })
+    expect(messages).toEqual([
+      { role: 'user', content: 'Open tickets for Alpha?' },
+      { role: 'assistant', content: 'Two are open.' },
+      { role: 'user', content: long },
+    ])
+    expect(instructions).toContain(TEAMS_CHAT_RULE)
+    expect(instructions).toContain('General knowledge, not from client data')
+    expect(Object.keys(tools)).toContain('proposeSave')
+
+    const seen: Seen = {}
+    await askShadowWith(testDeps('ok', seen), asha, long)
+    expect(seen.messages).toEqual([{ role: 'user', content: 'y'.repeat(4000) }])
+    expect(seen.instructions).not.toContain(TEAMS_CHAT_RULE)
+  })
+
+  it('proposeSave records a proposal only for a client in scope, and drops a future date', async () => {
+    const run = async (input: Record<string, unknown>) => {
+      const deps: AskDeps = {
+        ...testDeps('ok'),
+        generate: async (o) => {
+          const out = await (o.tools.proposeSave as { execute: (i: unknown, x: unknown) => Promise<unknown> }).execute(input, {
+            toolCallId: 't1',
+            messages: [],
+          })
+          return { text: JSON.stringify(out) }
+        },
+      }
+      return askShadowWith(deps, asha, 'save this for Alpha', { teams: true })
+    }
+    const ok = await run({ clientId: 'c1', title: 'Call with Ravi', meetingDate: '2026-11-17', source: 'this_message', startsWith: 'Ravi: hello' })
+    expect(ok.save).toEqual({
+      clientId: 'c1',
+      clientName: 'Alpha Traders',
+      title: 'Call with Ravi',
+      meetingDate: '2026-11-17',
+      source: 'this_message',
+      startsWith: 'Ravi: hello',
+    })
+    const future = await run({ clientId: 'c1', title: 'Call', meetingDate: '2026-12-25', source: 'this_message' })
+    expect(future.save?.meetingDate).toBeNull()
+    const outside = await run({ clientId: 'c2', title: 'Call', source: 'this_message' })
+    expect(outside.save).toBeUndefined()
+    expect(outside.text).toMatch(/not in your list/)
   })
 
   it('rejects an empty question before calling the model', async () => {

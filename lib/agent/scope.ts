@@ -1,7 +1,23 @@
 // Chat scope and request parsing. Pure (no server-only imports), so it is unit tested.
 import { z } from 'zod'
 
-export type ScopedClient = { id: string; name: string }
+/** A client the user may ask about. accountant and openTickets help the model answer "Puneeth's clients" questions. */
+export type ScopedClient = { id: string; name: string; accountant?: string | null; openTickets?: number }
+
+/** ScopedClient from a lib/data client list item. */
+export function toScopedClient(c: { id: string; name: string; vaName: string | null; openTickets: number }): ScopedClient {
+  return { id: c.id, name: c.name, accountant: c.vaName, openTickets: c.openTickets }
+}
+
+/** Clients whose accountant name contains every word of `accountant` (case-insensitive). Blank: all clients. */
+export function clientsOfAccountant(clients: ScopedClient[], accountant: string | null | undefined): ScopedClient[] {
+  const words = (accountant ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return clients
+  return clients.filter((c) => {
+    const name = (c.accountant ?? '').toLowerCase()
+    return name !== '' && words.every((w) => name.includes(w))
+  })
+}
 
 /**
  * What one chat request may read.

@@ -8,15 +8,17 @@ import { createAdminSupabase } from '@/lib/supabase/admin'
 import { cardAttachment, escalationCard, filesCard, reminderCard, ticketCard } from './cards'
 import { defaultConnector } from './connector'
 import { siteUrl as defaultSiteUrl } from './env'
+import { appUserByEmail } from './identity'
+import { loadRoutes } from './routing'
 import { supabaseTeamsStore } from './store'
 import { supabaseNotifyReads, type NotifyReads, type PilotClient, type UploadForNotify } from './notify-store'
 import type {
   AdaptiveCard,
+  DeliveryTarget,
   NotificationAction,
   NotificationKind,
   NotificationRow,
-  TeamsChannelMap,
-  TeamsChannelRef,
+  ResolveUser,
   TeamsConnector,
   TeamsStore,
   TicketForCard,
@@ -54,7 +56,7 @@ export const STALE_CLAIM_MS = 15 * 60_000
 /** Clicks that mean someone is on it: no more reminders or escalations until the client writes again. */
 const HANDLED_ACTIONS: ReadonlySet<NotificationAction> = new Set(['started', 'closed', 'not_ticket', 'reassigned'])
 
-export const NO_CHANNELS_ERROR = 'Teams channels are not linked yet. Type "link <email>" in each channel.'
+export const NO_CHANNELS_ERROR = 'Nobody has opened the Shadow chat in Teams yet (and no channels are linked), so no cards were sent.'
 export const NO_CONNECTOR_ERROR = 'TEAMS_BOT_APP_ID / TEAMS_BOT_APP_PASSWORD / TEAMS_BOT_TENANT_ID are not set'
 
 export type NotifyDeps = {
@@ -65,6 +67,8 @@ export type NotifyDeps = {
   siteUrl?: string
   timezone?: string
   teamNumbers?: Set<string>
+  /** Role lookup for the stored 1:1 chats (default: lib/teams/identity appUserByEmail). */
+  resolveUser?: ResolveUser
 }
 
 type PlannedCard = {
@@ -73,7 +77,8 @@ type PlannedCard = {
   refs: string[]
   clientId: string
   clientName: string
-  channel: TeamsChannelRef
+  /** One 1:1 chat or channel, or every escalation chat. */
+  targets: DeliveryTarget[]
   /** Builds the card from the refs this run managed to claim. */
   build: (claimed: string[]) => AdaptiveCard
   /** Refs whose earlier claim looks lost (no activity id after STALE_CLAIM_MS), with the sent_at seen. */
@@ -132,24 +137,37 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
   const warningsDetail = () => (warnings.length ? { warnings } : {})
   result.processed = fresh.length + waiting.length + uploads.length
   const found = { newTickets: fresh.length, waitingTickets: waiting.length, uploads: uploads.length }
+  // Nothing new and nothing waiting: skip the role lookups (they cost a few reads per stored chat).
+  if (result.processed === 0) {
+    result.details = { clients: clients.length, found, cards: [], ...warningsDetail() }
+    return result
+  }
 
-  const map = await store.channels()
-  if (!map) {
-    // Not an error: before the channels are linked every 5-minute run would otherwise show as a failure (500).
+  const routes = await loadRoutes({ store, resolveUser: deps.resolveUser ?? appUserByEmail })
+  for (const s of routes.skipped) warn(`Teams 1:1 chat skipped: ${s}`)
+  if (!routes.any) {
+    // Not an error: until someone opens Shadow every 5-minute run would otherwise show as a failure (500).
     result.details = { clients: clients.length, found, cards: [], note: NO_CHANNELS_ERROR, ...warningsDetail() }
     return result
   }
 
-  // Routing: the accountant's own channel, else Escalations with one error line per unlinked accountant.
+  // Routing: the accountant's own 1:1 chat (or linked channel), else the escalation chats with one error line per
+  // accountant who has not opened Shadow yet.
   const unlinked = new Map<string, { name: string; count: number }>()
-  const routeToAccountant = (vaId: string | null, vaName: string | null, client: string): TeamsChannelRef | null => {
-    const own = vaId ? map.accountants[vaId] : undefined
-    if (own) return own
+  const held: string[] = []
+  const routeToAccountant = (vaId: string | null, vaName: string | null, client: string): DeliveryTarget[] | 'held' => {
+    const own = routes.accountant(vaId)
+    if (own) return [own]
+    // A role lookup failed: the missing route may be this accountant's own chat. Wait for the next run (no claim).
+    if (vaId && routes.lookupFailed) {
+      held.push(`${vaName ?? vaId}: ${client}`)
+      return 'held'
+    }
     const key = vaId ?? `(no accountant) ${client}`
     const entry = unlinked.get(key) ?? { name: vaId ? `${vaName ?? vaId} (${vaId})` : `no accountant for ${client}`, count: 0 }
     entry.count++
     unlinked.set(key, entry)
-    return map.escalations
+    return routes.escalations()
   }
   const unroutable: string[] = []
 
@@ -161,8 +179,9 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
   const staleTickets = await staleRefs(rows, 'ticket', [...sentTickets], nowMs)
   for (const t of fresh) {
     if (sentTickets.has(t.id) && !staleTickets.has(t.id)) continue
-    const channel = routeToAccountant(t.vaId, t.vaName, t.clientName)
-    if (!channel) {
+    const targets = routeToAccountant(t.vaId, t.vaName, t.clientName)
+    if (targets === 'held') continue // a role lookup failed: this card waits for the next run
+    if (!targets.length) {
       unroutable.push(`ticket ${t.id} (${t.clientName})`)
       continue
     }
@@ -171,7 +190,7 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
       refs: [t.id],
       clientId: t.clientId,
       clientName: t.clientName,
-      channel,
+      targets,
       build: () => ticketCard(t, { siteUrl: site }),
       stale: pick(staleTickets, t.id),
     })
@@ -199,8 +218,9 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
     if (await handledSince(rows, w.t, w.ref)) continue
     const waitingMinutes = Math.floor(w.minutes)
     if (needEscalation) {
-      if (!map.escalations) {
-        unroutable.push(`escalation ${w.ref} (${w.t.clientName}): no Escalations channel`)
+      const escalationTargets = routes.escalations()
+      if (!escalationTargets.length) {
+        unroutable.push(`escalation ${w.ref} (${w.t.clientName}): no Admin or Engineer has opened Shadow, and no Escalations channel`)
       } else {
         accountants ??= (await store.accountants()).map((a) => ({ vaId: a.vaId, name: a.name }))
         const list = accountants
@@ -209,15 +229,17 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
           refs: [w.ref],
           clientId: w.t.clientId,
           clientName: w.t.clientName,
-          channel: map.escalations,
+          targets: escalationTargets,
           build: () => escalationCard(w.t, { siteUrl: site, waitingMinutes, ref: w.ref, accountants: list }),
           stale: pick(staleEscalations, w.ref),
         })
       }
     }
     if (needReminder) {
-      const channel = routeToAccountant(w.t.vaId, w.t.vaName, w.t.clientName)
-      if (!channel) {
+      const targets = routeToAccountant(w.t.vaId, w.t.vaName, w.t.clientName)
+      if (targets === 'held') {
+        // A role lookup failed: this card waits for the next run.
+      } else if (!targets.length) {
         unroutable.push(`reminder ${w.ref} (${w.t.clientName})`)
       } else {
         plan.push({
@@ -225,7 +247,7 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
           refs: [w.ref],
           clientId: w.t.clientId,
           clientName: w.t.clientName,
-          channel,
+          targets,
           build: () => reminderCard(w.t, { siteUrl: site, waitingMinutes, ref: w.ref }),
           stale: pick(staleReminders, w.ref),
         })
@@ -248,8 +270,9 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
   for (const [clientId, files] of byClient) {
     const client = clientById.get(clientId)
     const clientName = client?.clientName ?? files[0].clientName
-    const channel = routeToAccountant(client?.vaId ?? null, null, clientName)
-    if (!channel) {
+    const targets = routeToAccountant(client?.vaId ?? null, null, clientName)
+    if (targets === 'held') continue // a role lookup failed: this card waits for the next run
+    if (!targets.length) {
       unroutable.push(`files for ${clientName}`)
       continue
     }
@@ -258,7 +281,7 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
       refs: files.map((f) => f.uploadId),
       clientId,
       clientName,
-      channel,
+      targets,
       build: (claimed) =>
         filesCard({
           clientId,
@@ -272,10 +295,10 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
   }
 
   for (const [, u] of unlinked) {
-    result.errors.push(`No Teams channel linked for accountant ${u.name}: ${u.count} card(s) sent to Escalations instead.`)
+    result.errors.push(`Accountant ${u.name} has not opened Shadow in Teams: ${u.count} card(s) sent to the escalation chats instead.`)
   }
   if (unroutable.length) {
-    result.errors.push(`No Teams channel to send to (link the accountant or Escalations channel): ${unroutable.join('; ')}`)
+    result.errors.push(`Nowhere to send in Teams (the person must open the Shadow chat once): ${unroutable.join('; ')}`)
   }
 
   // 4. Send, at most MAX_SENDS_PER_RUN cards.
@@ -286,7 +309,7 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
     const outcome: CardOutcome = {
       kind: p.kind,
       ref: p.refs.join(','),
-      channel: p.channel.name ?? p.channel.id,
+      channel: p.targets.map((t) => t.name ?? t.id).join(', '),
       client: p.clientName,
       status: 'would_send',
     }
@@ -301,7 +324,7 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
       cards.push(outcome)
       continue
     }
-    outcome.status = await sendOne(p, map, store, connector!, result.errors, nowMs, () => attempts++)
+    outcome.status = await sendOne(p, store, connector!, result.errors, nowMs, () => attempts++)
     if (outcome.status === 'sent') result.written++
     cards.push(outcome)
   }
@@ -311,6 +334,7 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
     found,
     cards,
     deferred: deferred.length ? { count: deferred.length, cards: deferred } : undefined,
+    ...(held.length ? { held: { reason: 'a Teams role lookup failed; retried next run', cards: held } } : {}),
     ...warningsDetail(),
   }
   return result
@@ -380,47 +404,93 @@ async function handledSince(rows: RowReader, t: TicketForCard, ref: string): Pro
   )
 }
 
+/**
+ * Posts one card to every target (one 1:1 chat or channel, or every escalation chat). One claim row per ref covers
+ * all copies: its channel_id and activity_id are those of the first copy that went out (the copy the bot refreshes
+ * after a click; other copies keep their buttons, and a second click on them is refused as already done). When no
+ * copy went out the claims are released so the next run retries; when some did, the failures are reported only.
+ */
+export async function sendToTargets(
+  o: { kind: NotificationKind; refs: string[]; clientId: string; label: string; targets: DeliveryTarget[]; card: (claimed: string[]) => AdaptiveCard },
+  store: TeamsStore,
+  connector: TeamsConnector,
+  errors: string[],
+  countAttempt: () => void,
+): Promise<'sent' | 'already_sent' | 'failed'> {
+  const claimed: string[] = []
+  try {
+    for (const ref of o.refs) {
+      if (await store.claim({ kind: o.kind, ref_id: ref, client_id: o.clientId, channel_id: o.targets[0].id })) claimed.push(ref)
+    }
+    if (!claimed.length) return 'already_sent'
+    countAttempt()
+    const activity = cardAttachment(o.card(claimed))
+    let first: { target: DeliveryTarget; id: string } | null = null
+    const failures: string[] = []
+    for (const target of o.targets) {
+      try {
+        const sent = await connector.send(target.serviceUrl, target.id, activity)
+        first ??= { target, id: sent.id }
+      } catch (e) {
+        failures.push(o.targets.length > 1 ? `${target.name ?? target.id}: ${message(e)}` : message(e))
+      }
+    }
+    // Nothing went out: one error line, and the claims are released below.
+    if (!first) throw new Error(failures.join('; '))
+    for (const f of failures) errors.push(`${o.kind} ${o.refs.join(',')} (${o.label}) copy to ${f}`)
+    // A card is out: keep the claims even if saving the activity id fails, so it is never sent twice.
+    // The claim named the first target; when that copy failed, point the row at the chat that has the card.
+    const moveTo = first.target.id === o.targets[0].id ? undefined : first.target.id
+    for (const ref of claimed) {
+      // Tried twice: a row left without an activity id looks like a lost send and would be posted again to everyone.
+      try {
+        await store.setActivityId(o.kind, ref, first.id, moveTo)
+      } catch {
+        try {
+          await store.setActivityId(o.kind, ref, first.id, moveTo)
+        } catch (e) {
+          errors.push(`save activity id ${o.kind} ${ref}: ${message(e)}`)
+        }
+      }
+    }
+    return 'sent'
+  } catch (e) {
+    errors.push(`${o.kind} ${o.refs.join(',')} (${o.label}): ${message(e)}`)
+    for (const ref of claimed) {
+      try {
+        await store.release(o.kind, ref)
+      } catch (r) {
+        errors.push(`release ${o.kind} ${ref}: ${message(r)}`)
+      }
+    }
+    return 'failed'
+  }
+}
+
 async function sendOne(
   p: PlannedCard,
-  map: TeamsChannelMap,
   store: TeamsStore,
   connector: TeamsConnector,
   errors: string[],
   nowMs: number,
   countAttempt: () => void,
 ): Promise<CardOutcome['status']> {
-  const claimed: string[] = []
   try {
     // A lost claim is released first, but only after a fresh read shows the same stale row (no other run
-    // re-claimed it since). The claim below then decides, as usual, which run sends it.
+    // re-claimed it since). The claim then decides, as usual, which run sends it.
     for (const [ref, sentAt] of p.stale ?? []) {
       const row = await store.get(p.kind, ref)
       if (isStale(row, nowMs) && row.sent_at === sentAt) await store.release(p.kind, ref)
     }
-    for (const ref of p.refs) {
-      if (await store.claim({ kind: p.kind, ref_id: ref, client_id: p.clientId, channel_id: p.channel.id })) claimed.push(ref)
-    }
-    if (!claimed.length) return 'already_sent'
-    countAttempt()
-    const sent = await connector.send(map.serviceUrl, p.channel.id, cardAttachment(p.build(claimed)))
-    // The card is out: keep the claims even if saving the activity id fails, so it is never sent twice.
-    for (const ref of claimed) {
-      try {
-        await store.setActivityId(p.kind, ref, sent.id)
-      } catch (e) {
-        errors.push(`save activity id ${p.kind} ${ref}: ${message(e)}`)
-      }
-    }
-    return 'sent'
   } catch (e) {
     errors.push(`${p.kind} ${p.refs.join(',')} (${p.clientName}): ${message(e)}`)
-    for (const ref of claimed) {
-      try {
-        await store.release(p.kind, ref)
-      } catch (r) {
-        errors.push(`release ${p.kind} ${ref}: ${message(r)}`)
-      }
-    }
     return 'failed'
   }
+  return sendToTargets(
+    { kind: p.kind, refs: p.refs, clientId: p.clientId, label: p.clientName, targets: p.targets, card: p.build },
+    store,
+    connector,
+    errors,
+    countAttempt,
+  )
 }

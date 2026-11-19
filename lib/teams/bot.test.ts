@@ -16,18 +16,30 @@ import {
   formatAnswer,
   handleActivity,
   INVALID_CARD,
+  MAX_QUESTION,
   MAX_QUESTIONS,
+  NEW_CHAT_DONE,
+  NO_ACCOUNTANT_CHAT,
   NOT_SET_UP,
+  NOTHING_TO_SAVE,
   OTHER_TEAM,
   PING_FAILED,
   REFUSAL,
   resetBotState,
+  SAVE_EXPIRED,
+  SAVE_GONE,
+  setupLine,
   TOO_MANY,
   type BotDeps,
 } from './bot'
+import type { PendingMeta, PendingSave, TeamsChatStore } from './chat'
+import type { SaveTranscriptInput } from '@/lib/data/transcripts'
 import type {
   Activity,
+  AskShadow,
   NotificationRow,
+  PersonalChat,
+  PersonalChats,
   OutgoingActivity,
   TeamsChannelMap,
   TeamsStore,
@@ -95,6 +107,7 @@ function setup(
     now?: () => Date
     keepState?: boolean
     ticketStatus?: string
+    chats?: PersonalChats
   } = {},
 ) {
   if (!o.keepState) resetBotState()
@@ -104,6 +117,10 @@ function setup(
   const recorded: { kind: string; ref: string; action: string; by: string; at: string }[] = []
   let map: TeamsChannelMap | null = o.map === undefined ? null : o.map
   const saved: TeamsChannelMap[] = []
+  // Everyone has opened the Shadow chat already (the 1:1 test conversation), unless the test says otherwise.
+  const chats: PersonalChats =
+    o.chats ??
+    Object.fromEntries(Object.keys(users).map((email) => [email, { conversationId: 'a:1on1', serviceUrl: SVC, name: null, at: '' }]))
   const rows = o.rows ?? []
 
   const store: TeamsStore = {
@@ -112,6 +129,10 @@ function setup(
       map = structuredClone(m)
       saved.push(structuredClone(m))
     },
+    personalChats: async () => structuredClone(chats),
+    savePersonalChat: vi.fn(async (email: string, chat: PersonalChat) => {
+      chats[email] = { ...chat }
+    }),
     sentRefs: async () => new Set(),
     claim: async () => true,
     release: async () => {},
@@ -153,7 +174,7 @@ function setup(
     }),
   }
 
-  const ask = vi.fn(async () => ({
+  const ask = vi.fn<AskShadow>(async () => ({
     text: 'Acme filed GSTR-3B on 20 Oct [1].',
     citations: [
       { n: 1, label: 'WhatsApp message, 20 Oct 10:15', link: '/clients/c1/timeline?m=9' },
@@ -162,7 +183,55 @@ function setup(
     ],
   }))
 
+  const chatRows: { id: string; email: string; kind: string; content: string; meta: PendingMeta | null; created_at: string }[] = []
+  let chatSeq = 0
+  const nowIso = () => (o.now ?? (() => NOW))().toISOString()
+  const asPending = (r: (typeof chatRows)[number]): PendingSave => ({
+    id: r.id,
+    email: r.email,
+    content: r.content,
+    meta: r.meta as PendingMeta,
+    createdAt: r.created_at,
+  })
+  const chat: TeamsChatStore = {
+    recentTurns: vi.fn(async (email: string, since: string, limit: number) =>
+      chatRows
+        .filter((r) => r.email === email.toLowerCase() && (r.kind === 'user' || r.kind === 'assistant') && r.created_at > since)
+        .slice(-limit)
+        .map((r) => ({ kind: r.kind as 'user' | 'assistant', content: r.content, created_at: r.created_at })),
+    ),
+    addTurns: vi.fn(async (email: string, turns: { kind: 'user' | 'assistant'; content: string }[]) => {
+      for (const t of turns) chatRows.push({ id: `row-${++chatSeq}`, email: email.toLowerCase(), kind: t.kind, content: t.content, meta: null, created_at: nowIso() })
+    }),
+    clear: vi.fn(async (email: string) => {
+      for (let i = chatRows.length - 1; i >= 0; i--) {
+        if (chatRows[i].email === email.toLowerCase() && chatRows[i].kind !== 'pending_save') chatRows.splice(i, 1)
+      }
+    }),
+    addPending: vi.fn(async (email: string, content: string, meta: PendingMeta) => {
+      const id = `p-${++chatSeq}`
+      chatRows.push({ id, email: email.toLowerCase(), kind: 'pending_save', content, meta, created_at: nowIso() })
+      return id
+    }),
+    getPending: vi.fn(async (id: string, email: string) => {
+      const r = chatRows.find((x) => x.id === id && x.email === email.toLowerCase() && x.kind === 'pending_save')
+      return r ? asPending(r) : null
+    }),
+    takePending: vi.fn(async (id: string, email: string) => {
+      const i = chatRows.findIndex((x) => x.id === id && x.email === email.toLowerCase() && x.kind === 'pending_save')
+      if (i < 0) return null
+      return asPending(chatRows.splice(i, 1)[0])
+    }),
+    prune: vi.fn(async () => 0),
+  }
+  const saveTranscript = vi.fn(async (user: AppUser, input: SaveTranscriptInput) => {
+    if (user.role === 'senior_accountant' && input.clientId !== 'c1') throw new ForbiddenError()
+    return { id: 'mt-1' }
+  })
+
   const deps: BotDeps = {
+    chat,
+    saveTranscript,
     connector: {
       send: vi.fn(async (serviceUrl: string, conversationId: string, activity: OutgoingActivity) => {
         sent.push({ serviceUrl, conversationId, activity })
@@ -188,7 +257,7 @@ function setup(
   const runDeferred = async () => {
     for (const t of tasks.splice(0)) await t()
   }
-  return { deps, sent, updated, tasks, runDeferred, recorded, saved, data, followUps, ask, getMap: () => map }
+  return { deps, sent, updated, tasks, runDeferred, recorded, saved, data, followUps, ask, chat, chatRows, saveTranscript, chats, store, getMap: () => map }
 }
 
 function base(over: Partial<Activity> = {}): Activity {
@@ -366,10 +435,18 @@ describe('card actions', () => {
     expect(s.data.reassignTicket).not.toHaveBeenCalled()
   })
 
-  it('reassign: admin reassigns, records with a note and posts the ticket card to the new channel', async () => {
+  it('reassign: posts the ticket card to the new accountant 1:1 chat when they have one', async () => {
+    const s = setup({ email: 'admin@x.in', map: emptyMap() })
+    s.chats['ravi@x.in'] = { conversationId: 'a:ravi-1on1', serviceUrl: SVC, name: 'Ravi', at: '' }
+    await handleActivity(click({ action: 'reassign', ticketId: 't1', kind: 'escalation', ref: E1, vaId: 'va-2' }), s.deps)
+    await s.runDeferred()
+    expect(s.sent.map((x) => x.conversationId)).toEqual(['a:ravi-1on1'])
+  })
+
+  it('reassign: admin reassigns, records with a note and posts the ticket card to the new channel (fallback)', async () => {
     const map = emptyMap()
     map.accountants['va-2'] = { id: '19:ravi', name: 'Ravi tickets' }
-    const s = setup({ email: 'admin@x.in', map })
+    const s = setup({ email: 'admin@x.in', map, chats: { 'admin@x.in': { conversationId: 'a:1on1', serviceUrl: SVC, name: null, at: '' } } })
     const r = await handleActivity(click({ action: 'reassign', ticketId: 't1', kind: 'escalation', ref: E1, vaId: 'va-2' }), s.deps)
     expect(s.data.reassignTicket).toHaveBeenCalledWith(expect.objectContaining({ role: 'admin' }), 't1', 'va-2')
     expect(s.sent).toHaveLength(0) // posted after the invoke answer
@@ -381,12 +458,12 @@ describe('card actions', () => {
     expect(s.recorded.map((x) => `${x.kind}:${x.ref}:${x.action}`)).toEqual([`escalation:${E1}:reassigned`, 'ticket:t1:reassigned'])
   })
 
-  it('reassign: no channel for the new accountant is mentioned in the note', async () => {
-    const s = setup({ email: 'admin@x.in', map: emptyMap() })
+  it('reassign: says so in the note when the new accountant has not opened Shadow', async () => {
+    const s = setup({ email: 'admin@x.in', map: emptyMap(), chats: {} })
     const r = await handleActivity(click({ action: 'reassign', ticketId: 't1', kind: 'escalation', ref: E1, vaId: 'va-2' }), s.deps)
     await s.runDeferred()
     expect(s.sent).toHaveLength(0)
-    expect(cardText(body(r).value)).toContain('no Teams channel is linked')
+    expect(cardText(body(r).value)).toContain('have not opened the Shadow chat')
   })
 
   it('reassign: a senior accountant cannot reassign; a missing pick asks for one', async () => {
@@ -399,10 +476,21 @@ describe('card actions', () => {
     expect(String(body(r2).value)).toMatch(/pick an accountant/i)
   })
 
-  it('ping: admin posts a reminder with an @mention and records pinged on the escalation only', async () => {
+  it('ping: goes to the accountant 1:1 chat, without an @mention', async () => {
+    const s = setup({ email: 'admin@x.in', map: emptyMap() })
+    s.chats['asha@x.in'] = { conversationId: 'a:asha-1on1', serviceUrl: SVC, name: 'Asha', at: '' }
+    await handleActivity(click({ action: 'ping', ticketId: 't1', kind: 'escalation', ref: E1 }), s.deps)
+    await s.runDeferred()
+    expect(s.sent[0].conversationId).toBe('a:asha-1on1')
+    expect(s.sent[0].activity.entities).toBeUndefined()
+    expect(s.sent[0].activity.text).toMatch(/asked you to pick this up/)
+    expect(s.sent[1].activity.text).toBe('Accountant pinged by Admin One')
+  })
+
+  it('ping: admin posts a reminder with an @mention to the linked channel (fallback) and records pinged on the escalation only', async () => {
     const map = emptyMap()
     map.accountants['va-1'] = { id: '19:asha', name: 'Asha tickets' }
-    const s = setup({ email: 'admin@x.in', map })
+    const s = setup({ email: 'admin@x.in', map, chats: { 'admin@x.in': { conversationId: 'a:1on1', serviceUrl: SVC, name: null, at: '' } } })
     const r = await handleActivity(click({ action: 'ping', ticketId: 't1', kind: 'escalation', ref: E1 }), s.deps)
     expect(s.recorded.map((x) => `${x.kind}:${x.ref}:${x.action}`)).toEqual([`escalation:${E1}:pinged`])
     expect(body(r).type).toBe('application/vnd.microsoft.card.adaptive')
@@ -420,9 +508,9 @@ describe('card actions', () => {
   it('ping: non-admin refused; no channel gives a friendly message', async () => {
     const s = setup({ email: 'eng@x.in' })
     expect(body(await handleActivity(click({ action: 'ping', ticketId: 't1', kind: 'escalation', ref: E1 }), s.deps)).value).toBe(REFUSAL)
-    const a = setup({ email: 'admin@x.in', map: emptyMap() })
+    const a = setup({ email: 'admin@x.in', map: emptyMap(), chats: {} })
     const r = await handleActivity(click({ action: 'ping', ticketId: 't1', kind: 'escalation', ref: E1 }), a.deps)
-    expect(String(body(r).value)).toMatch(/no teams channel/i)
+    expect(body(r).value).toBe(NO_ACCOUNTANT_CHAT)
     expect(a.recorded).toHaveLength(0)
   })
 
@@ -517,7 +605,10 @@ describe('AI questions', () => {
     expect(s.sent).toHaveLength(0)
     expect(s.tasks).toHaveLength(1)
     await s.runDeferred()
-    expect(s.ask).toHaveBeenCalledWith(expect.objectContaining({ email: 'asha@x.in' }), 'What is pending for Acme?')
+    expect(s.ask).toHaveBeenCalledWith(expect.objectContaining({ email: 'asha@x.in' }), 'What is pending for Acme?', {
+      history: [],
+      teams: true,
+    })
     expect(s.sent[0].conversationId).toBe('a:1on1')
     const text = s.sent[0].activity.text!
     expect(s.sent[0].activity.textFormat).toBe('markdown')
@@ -528,11 +619,64 @@ describe('AI questions', () => {
     expect(text).toContain('3. Meeting at 12:30')
   })
 
-  it('caps the question at 1000 characters', async () => {
+  it('caps the message at MAX_QUESTION characters and keeps line breaks', async () => {
     const s = setup()
-    await handleActivity(base({ text: 'x'.repeat(5000) }), s.deps)
+    await handleActivity(base({ text: 'x'.repeat(MAX_QUESTION + 5000) }), s.deps)
     await s.runDeferred()
-    expect((s.ask.mock.calls[0] as unknown[])[1]).toHaveLength(1000)
+    expect((s.ask.mock.calls[0] as unknown[])[1]).toHaveLength(MAX_QUESTION)
+    const t = setup()
+    await handleActivity(base({ text: 'Ravi: hello<br>Asha:  hi&nbsp;there' }), t.deps)
+    await t.runDeferred()
+    expect((t.ask.mock.calls[0] as unknown[])[1]).toBe('Ravi: hello\nAsha: hi there')
+  })
+
+  it('remembers the chat: the next question gets the earlier turns, citation numbers removed', async () => {
+    const s = setup()
+    await handleActivity(base({ id: 'm1', text: 'What is pending for Acme?' }), s.deps)
+    await s.runDeferred()
+    await handleActivity(base({ id: 'm2', text: 'And for Beta?' }), s.deps)
+    await s.runDeferred()
+    expect((s.ask.mock.calls[1] as unknown[])[2]).toEqual({
+      history: [
+        { role: 'user', text: 'What is pending for Acme?' },
+        { role: 'assistant', text: 'Acme filed GSTR-3B on 20 Oct .' },
+      ],
+      teams: true,
+    })
+  })
+
+  it('new chat forgets the earlier turns without asking the AI', async () => {
+    const s = setup()
+    await handleActivity(base({ id: 'm1', text: 'What is pending for Acme?' }), s.deps)
+    await s.runDeferred()
+    await handleActivity(base({ id: 'm2', text: 'New chat' }), s.deps)
+    expect(s.sent.at(-1)?.activity.text).toBe(NEW_CHAT_DONE)
+    expect(s.chatRows.filter((r) => r.kind !== 'pending_save')).toHaveLength(0)
+    expect(s.ask).toHaveBeenCalledTimes(1)
+  })
+
+  it('masks credentials before storing memory or asking the AI, and keeps the user turn when the AI fails', async () => {
+    const s = setup()
+    s.ask.mockRejectedValueOnce(new Error('timeout'))
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await handleActivity(base({ text: 'GST portal password: Abc@123 for Acme' }), s.deps)
+    await s.runDeferred()
+    err.mockRestore()
+    const asked = (s.ask.mock.calls[0] as unknown[])[1] as string
+    expect(asked).not.toContain('Abc@123')
+    expect(s.chatRows.map((r) => r.kind)).toEqual(['user'])
+    expect(s.chatRows[0].content).not.toContain('Abc@123')
+    expect(s.sent[0].activity.text).toBe(AI_FAILED)
+  })
+
+  it('answers without memory when memory cannot be read', async () => {
+    const s = setup()
+    vi.mocked(s.chat.recentTurns).mockRejectedValueOnce(new Error('db down'))
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await handleActivity(base({ text: 'hello' }), s.deps)
+    await s.runDeferred()
+    err.mockRestore()
+    expect(s.sent[0].activity.text).toContain('Acme filed GSTR-3B')
   })
 
   it('sends a sorry message when the AI fails', async () => {
@@ -543,6 +687,182 @@ describe('AI questions', () => {
     await s.runDeferred()
     err.mockRestore()
     expect(s.sent[0].activity.text).toBe(AI_FAILED)
+  })
+})
+
+// ---------------------------------------------------------------- 1:1 chat registration
+
+describe('remembering each person 1:1 chat', () => {
+  it('the first message saves the chat and says what the person will get, before answering', async () => {
+    const s = setup({ chats: {} })
+    await handleActivity(base({ text: 'hi' }), s.deps)
+    expect(s.store.savePersonalChat).toHaveBeenCalledWith('asha@x.in', expect.objectContaining({ conversationId: 'a:1on1', serviceUrl: SVC, name: 'Asha' }))
+    expect(s.sent[0].activity.text).toBe(setupLine(users['asha@x.in']))
+    expect(s.sent[0].activity.text).toMatch(/tickets, reminders, client files and follow-ups/)
+    await s.runDeferred()
+    expect(s.sent[1].activity.text).toContain('Acme filed GSTR-3B')
+  })
+
+  it('an Admin is told they get escalations', () => {
+    expect(setupLine(users['admin@x.in'])).toMatch(/escalations/)
+  })
+
+  it('a known chat is not saved again and gets no setup line; a changed chat is saved again quietly', async () => {
+    const s = setup()
+    await handleActivity(base({ id: 'm1', text: 'hi' }), s.deps)
+    expect(s.store.savePersonalChat).not.toHaveBeenCalled()
+    expect(s.sent).toHaveLength(0)
+
+    const moved = setup({ chats: { 'asha@x.in': { conversationId: 'a:old', serviceUrl: SVC, name: 'Asha', at: '' } } })
+    await handleActivity(base({ id: 'm2', text: 'hi' }), moved.deps)
+    expect(moved.store.savePersonalChat).toHaveBeenCalledWith('asha@x.in', expect.objectContaining({ conversationId: 'a:1on1' }))
+    expect(moved.sent).toHaveLength(0)
+  })
+
+  it('a channel message never saves a chat', async () => {
+    const s = setup({ chats: {}, email: 'admin@x.in' })
+    await handleActivity(channelActivity('channels'), s.deps)
+    expect(s.store.savePersonalChat).not.toHaveBeenCalled()
+  })
+
+  it('installing Shadow in a 1:1 chat saves it and sends the help card and the setup line', async () => {
+    const s = setup({ chats: {} })
+    await handleActivity(base({ type: 'conversationUpdate', membersAdded: [{ id: '28:bot' }] }), s.deps)
+    expect(s.store.savePersonalChat).toHaveBeenCalledWith('asha@x.in', expect.objectContaining({ conversationId: 'a:1on1' }))
+    expect(s.sent).toHaveLength(2)
+    expect(s.sent[0].activity.attachments).toHaveLength(1)
+    expect(s.sent[1].activity.text).toBe(setupLine(users['asha@x.in']))
+  })
+
+  it('a save lost to another person registering at the same moment is written again', async () => {
+    const s = setup({ chats: {} })
+    let calls = 0
+    vi.mocked(s.store.savePersonalChat).mockImplementation(async (email, chat) => {
+      calls++
+      if (calls > 1) s.chats[email] = { ...chat } // the first write is overwritten by someone else
+    })
+    await handleActivity(base({ id: 'm1', text: 'hi' }), s.deps)
+    expect(s.store.savePersonalChat).toHaveBeenCalledTimes(2)
+    expect(s.chats['asha@x.in']?.conversationId).toBe('a:1on1')
+  })
+
+  it('a save failure is logged and the question is still answered', async () => {
+    const s = setup({ chats: {} })
+    vi.mocked(s.store.savePersonalChat).mockRejectedValueOnce(new Error('db down'))
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await handleActivity(base({ text: 'hi' }), s.deps)
+    await s.runDeferred()
+    err.mockRestore()
+    expect(s.sent.map((x) => x.activity.text)).toEqual([expect.stringContaining('Acme filed GSTR-3B')])
+  })
+})
+
+// ---------------------------------------------------------------- save to client
+
+describe('saving a transcript', () => {
+  const transcript = 'Ravi: We will pay GST on Friday.\nAsha: Noted, I will send the challan.'
+  const proposal = {
+    clientId: 'c1',
+    clientName: 'Acme Traders',
+    title: 'Call with Ravi',
+    meetingDate: '2026-11-18',
+    source: 'this_message' as const,
+    startsWith: 'Ravi: We will pay',
+  }
+
+  async function proposed(o: Parameters<typeof setup>[0] = {}) {
+    const s = setup(o)
+    s.ask.mockResolvedValueOnce({ text: 'Press Save on the card to store it for Acme Traders.', citations: [], save: proposal })
+    await handleActivity(base({ text: `Please save this for Acme<br>${transcript.replace('\n', '<br>')}` }), s.deps)
+    await s.runDeferred()
+    const card = s.sent[1]?.activity.attachments?.[0].content
+    const save = (card?.actions as { data: { action: string; pendingId: string } }[] | undefined)?.find((a) => a.data.action === 'save')
+    return { s, card, pendingId: save?.data.pendingId ?? '' }
+  }
+
+  function click(action: 'save' | 'cancel', pendingId: string, id?: string): Activity {
+    return base({ type: 'invoke', name: 'adaptiveCard/action', ...(id ? { id } : {}), value: { action: { type: 'Action.Execute', verb: 'save', data: { action, pendingId } } } })
+  }
+
+  it('shows a Save card with only the transcript (the request line is cut), and saves nothing yet', async () => {
+    const { s, card, pendingId } = await proposed()
+    expect(s.sent[0].activity.text).toContain('Press Save')
+    expect(JSON.stringify(card)).toContain('Save to Acme Traders?')
+    expect(pendingId).toBeTruthy()
+    const pending = s.chatRows.find((r) => r.kind === 'pending_save')
+    expect(pending?.content).toBe(transcript)
+    expect(s.saveTranscript).not.toHaveBeenCalled()
+  })
+
+  it('Save stores it once for the client; a second click finds nothing', async () => {
+    const { s, pendingId } = await proposed()
+    const r = await handleActivity(click('save', pendingId, 'i1'), s.deps)
+    expect(s.saveTranscript).toHaveBeenCalledWith(expect.objectContaining({ email: 'asha@x.in' }), {
+      clientId: 'c1',
+      title: 'Call with Ravi',
+      meetingDate: '2026-11-18',
+      transcript,
+      now: NOW,
+    })
+    expect(JSON.stringify(r.body)).toContain('Saved to Acme Traders by Asha')
+    const again = await handleActivity(click('save', pendingId, 'i2'), s.deps)
+    expect(again.body).toMatchObject({ value: SAVE_GONE })
+    expect(s.saveTranscript).toHaveBeenCalledTimes(1)
+  })
+
+  it('another person cannot press Save on my card', async () => {
+    const { s, pendingId } = await proposed()
+    vi.mocked(s.deps.connector.member).mockResolvedValue({ email: 'ravi@x.in', name: null, aadObjectId: null })
+    resetBotState() // member cache
+    const r = await handleActivity(click('save', pendingId), s.deps)
+    expect(r.body).toMatchObject({ value: SAVE_GONE })
+    expect(s.saveTranscript).not.toHaveBeenCalled()
+    expect(s.chatRows.some((x) => x.kind === 'pending_save')).toBe(true)
+  })
+
+  it('Cancel removes the request without saving', async () => {
+    const { s, pendingId } = await proposed()
+    const r = await handleActivity(click('cancel', pendingId), s.deps)
+    expect(JSON.stringify(r.body)).toContain('Cancelled by Asha')
+    expect(s.saveTranscript).not.toHaveBeenCalled()
+    expect(s.chatRows.some((x) => x.kind === 'pending_save')).toBe(false)
+  })
+
+  it('refuses a client outside the user scope, and keeps a retry card when the save fails', async () => {
+    const { s, pendingId } = await proposed()
+    s.saveTranscript.mockRejectedValueOnce(new ForbiddenError())
+    expect((await handleActivity(click('save', pendingId), s.deps)).body).toMatchObject({ value: REFUSAL })
+
+    const t = await proposed()
+    t.s.saveTranscript.mockRejectedValueOnce(new Error('db down'))
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const r = await handleActivity(click('save', t.pendingId), t.s.deps)
+    err.mockRestore()
+    expect(JSON.stringify(r.body)).toContain('Save to Acme Traders?')
+    expect(t.s.chatRows.filter((x) => x.kind === 'pending_save')).toHaveLength(1)
+  })
+
+  it('an old card has expired', async () => {
+    let now = NOW
+    const { s, pendingId } = await proposed({ now: () => now })
+    now = new Date(NOW.getTime() + 25 * 60 * 60_000)
+    expect((await handleActivity(click('save', pendingId), s.deps)).body).toMatchObject({ value: SAVE_EXPIRED })
+    expect(s.saveTranscript).not.toHaveBeenCalled()
+  })
+
+  it('says so when there is nothing to save', async () => {
+    const s = setup()
+    s.ask.mockResolvedValueOnce({ text: 'Okay.', citations: [], save: { ...proposal, startsWith: null } })
+    await handleActivity(base({ text: 'save it' }), s.deps)
+    await s.runDeferred()
+    expect(s.sent).toHaveLength(1)
+    expect(s.sent[0].activity.text).toContain(NOTHING_TO_SAVE)
+  })
+
+  it('rejects a malformed save click', async () => {
+    const s = setup()
+    const r = await handleActivity(base({ type: 'invoke', name: 'adaptiveCard/action', value: { action: { type: 'Action.Execute', verb: 'save', data: { action: 'drop' } } } }), s.deps)
+    expect(r.body).toMatchObject({ statusCode: 400 })
   })
 })
 

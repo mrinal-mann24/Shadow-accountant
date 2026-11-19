@@ -4,11 +4,14 @@ import { appTimezone } from '@/lib/env'
 import { businessMinutesBetween } from '@/lib/metrics/business-time'
 import { effectiveDirection, getTeamNumbers } from '@/lib/team'
 import { isClientFile } from '@/lib/data/documents'
-import { cardAttachment, followUpCard } from '@/lib/teams/cards'
+import { followUpCard } from '@/lib/teams/cards'
+import { appUserByEmail } from '@/lib/teams/identity'
+import { sendToTargets } from '@/lib/teams/notify'
+import { loadRoutes } from '@/lib/teams/routing'
 import { defaultConnector } from '@/lib/teams/connector'
 import { siteUrl as defaultSiteUrl } from '@/lib/teams/env'
 import { supabaseTeamsStore } from '@/lib/teams/store'
-import type { NotificationKind, TeamsChannelMap, TeamsChannelRef, TeamsConnector, TeamsStore } from '@/lib/teams/types'
+import type { DeliveryTarget, NotificationKind, ResolveUser, TeamsConnector, TeamsStore } from '@/lib/teams/types'
 import { addBusinessDays, istDate, istEndOfDay, resolveDue } from './dates'
 import { createFollowUpAI } from './extract'
 import { isAckOnly, isHoldingReply, mightBeRepeatAsk, mightBeTeamFollowUp } from './prefilter'
@@ -73,7 +76,7 @@ export const MAX_SENDS_PER_RUN = 25
 /** Word overlap (Jaccard) from which two items of the same kind and client count as the same item. */
 export const DUPLICATE_SIMILARITY = 0.6
 
-export const NO_CHANNELS_NOTE = 'Teams channels are not linked yet: no follow-up cards were sent.'
+export const NO_CHANNELS_NOTE = 'Nobody has opened the Shadow chat in Teams yet (and no channels are linked): no follow-up cards were sent.'
 export const NO_CONNECTOR_NOTE = 'Teams bot env is not set: no follow-up cards were sent (statuses still updated).'
 
 export type FollowUpsDeps = {
@@ -82,6 +85,8 @@ export type FollowUpsDeps = {
   teamsStore?: TeamsStore
   /** null means the bot env is not set. */
   connector?: TeamsConnector | null
+  /** Role lookup for the stored Teams 1:1 chats (default: lib/teams/identity appUserByEmail). */
+  resolveUser?: ResolveUser
   views?: (ids: string[]) => Promise<FollowUpView[]>
   siteUrl?: string
   teamNumbers?: Set<string>
@@ -675,8 +680,9 @@ async function runAlerts(
   if (!tasks.length) return { alerts: { ...summary, cards: [] } }
 
   const teamsStore = deps.teamsStore ?? supabaseTeamsStore()
-  const map = await teamsStore.channels()
-  if (!map) {
+  const routes = await loadRoutes({ store: teamsStore, resolveUser: deps.resolveUser ?? appUserByEmail })
+  for (const s of routes.skipped) notes.push(`Teams 1:1 chat skipped: ${s}`)
+  if (!routes.any) {
     notes.push(NO_CHANNELS_NOTE)
     return { alerts: { ...summary, cards: [], waiting: tasks.length } }
   }
@@ -689,19 +695,22 @@ async function runAlerts(
   const views = new Map((await (deps.views ?? followUpViews)(tasks.map((t) => t.row.id))).map((v) => [v.id, v]))
   const site = deps.siteUrl ?? defaultSiteUrl()
 
-  // Routing: the accountant's own channel, else Escalations with one error line per unlinked accountant.
+  // Routing: the accountant's own 1:1 chat (or linked channel), else the escalation chats with one error line per
+  // accountant who has not opened Shadow yet.
   const unlinked = new Map<string, { name: string; count: number }>()
   const unroutable: string[] = []
-  const route = (p: PlannedCard, v: FollowUpView): TeamsChannelRef | null => {
+  const route = (p: PlannedCard, v: FollowUpView): DeliveryTarget[] | 'held' => {
     if (p.route === 'accountant') {
-      const own = v.vaId ? map.accountants[v.vaId] : undefined
-      if (own) return own
+      const own = routes.accountant(v.vaId)
+      if (own) return [own]
+      // A role lookup failed: the missing route may be this accountant's own chat. Wait for the next run (no claim).
+      if (v.vaId && routes.lookupFailed) return 'held'
       const key = v.vaId ?? `(no accountant) ${v.clientName}`
       const entry = unlinked.get(key) ?? { name: v.vaId ? `${v.vaName ?? v.vaId} (${v.vaId})` : `no accountant for ${v.clientName}`, count: 0 }
       entry.count++
       unlinked.set(key, entry)
     }
-    return map.escalations
+    return routes.escalations()
   }
 
   const cards: FollowUpCardOutcome[] = []
@@ -716,8 +725,13 @@ async function runAlerts(
     }
     let complete = true
     for (const p of t.cards) {
-      const channel = route(p, v)
-      if (!channel) {
+      const targets = route(p, v)
+      if (targets === 'held') {
+        // Not marked reminded / escalated, so the next run tries again.
+        complete = false
+        continue
+      }
+      if (!targets.length) {
         unroutable.push(`${p.kind} ${p.ref} (${v.clientName})`)
         complete = false
         continue
@@ -728,7 +742,7 @@ async function runAlerts(
         ref: p.ref,
         followUpId: t.row.id,
         client: v.clientName,
-        channel: channel.name ?? channel.id,
+        channel: targets.map((x) => x.name ?? x.id).join(', '),
         status: 'would_send',
       }
       cards.push(outcome)
@@ -748,7 +762,21 @@ async function runAlerts(
         complete = false
         continue
       }
-      outcome.status = await sendOne(p, v, channel, map, teamsStore, connector!, site, result.errors, () => attempts++)
+      outcome.status = await sendToTargets(
+        {
+          kind: p.kind,
+          refs: [p.ref],
+          clientId: v.clientId,
+          label: v.clientName,
+          targets,
+          // kind must equal the teams_notifications kind claimed (the card buttons record clicks on that row).
+          card: () => followUpCard(v, { siteUrl: site, what: p.what, ref: p.ref, kind: p.kind }),
+        },
+        teamsStore,
+        connector!,
+        result.errors,
+        () => attempts++,
+      )
       if (outcome.status === 'sent') result.written++
       if (outcome.status !== 'sent' && outcome.status !== 'already_sent') complete = false
     }
@@ -763,10 +791,10 @@ async function runAlerts(
   }
 
   for (const [, u] of unlinked) {
-    result.errors.push(`No Teams channel linked for accountant ${u.name}: ${u.count} follow-up card(s) sent to Escalations instead.`)
+    result.errors.push(`Accountant ${u.name} has not opened Shadow in Teams: ${u.count} follow-up card(s) sent to the escalation chats instead.`)
   }
   if (unroutable.length) {
-    result.errors.push(`No Teams channel to send to (link the accountant or Escalations channel): ${unroutable.join('; ')}`)
+    result.errors.push(`Nowhere to send in Teams (the person must open the Shadow chat once): ${unroutable.join('; ')}`)
   }
   if (budgetDeferred) notes.push(`Alerts stopped at the time budget: ${budgetDeferred} card(s) wait for the next run.`)
   return {
@@ -776,44 +804,5 @@ async function runAlerts(
       ...(deferred ? { deferred } : {}),
       ...(budgetDeferred ? { stoppedAtBudget: budgetDeferred } : {}),
     },
-  }
-}
-
-async function sendOne(
-  p: PlannedCard,
-  v: FollowUpView,
-  channel: TeamsChannelRef,
-  map: TeamsChannelMap,
-  store: TeamsStore,
-  connector: TeamsConnector,
-  site: string,
-  errors: string[],
-  countAttempt: () => void,
-): Promise<FollowUpCardOutcome['status']> {
-  let claimed = false
-  try {
-    claimed = await store.claim({ kind: p.kind, ref_id: p.ref, client_id: v.clientId, channel_id: channel.id })
-    if (!claimed) return 'already_sent'
-    countAttempt()
-    // kind must equal the teams_notifications kind claimed above (the card buttons record clicks on that row).
-    const card = followUpCard(v, { siteUrl: site, what: p.what, ref: p.ref, kind: p.kind })
-    const sent = await connector.send(map.serviceUrl, channel.id, cardAttachment(card))
-    // The card is out: keep the claim even if saving the activity id fails, so it is never sent twice.
-    try {
-      await store.setActivityId(p.kind, p.ref, sent.id)
-    } catch (e) {
-      errors.push(`save activity id ${p.kind} ${p.ref}: ${message(e)}`)
-    }
-    return 'sent'
-  } catch (e) {
-    errors.push(`${p.kind} ${p.ref} (${v.clientName}): ${message(e)}`)
-    if (claimed) {
-      try {
-        await store.release(p.kind, p.ref)
-      } catch (r) {
-        errors.push(`release ${p.kind} ${p.ref}: ${message(r)}`)
-      }
-    }
-    return 'failed'
   }
 }

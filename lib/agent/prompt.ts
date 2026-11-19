@@ -12,6 +12,14 @@ function clean(name: string): string {
     .slice(0, 120);
 }
 
+/** " (accountant: X, open tickets: N)" from what is known, or "" when nothing is. */
+function clientFacts(c: ScopedClient): string {
+  const parts: string[] = [];
+  if (c.accountant !== undefined) parts.push(`accountant: ${c.accountant ? clean(c.accountant) : "not assigned"}`);
+  if (typeof c.openTickets === "number") parts.push(`open tickets: ${c.openTickets}`);
+  return parts.length ? ` (${parts.join(", ")})` : "";
+}
+
 export function buildSystemPrompt(o: {
   userName: string;
   today: string;
@@ -21,11 +29,12 @@ export function buildSystemPrompt(o: {
   const scopeText = o.fixedClient
     ? `The user picked one client: "${clean(o.fixedClient.name)}" (clientId ${o.fixedClient.id}). Answer only about this client. Tools are locked to it, so you may leave clientId out.`
     : [
-        "No client is picked. These are the clients the user may ask about (clientId: name):",
+        "No client is picked. These are the clients the user may ask about (clientId: name, accountant, open tickets):",
         "<clients>",
-        ...o.clients.map((c) => `${c.id}: ${clean(c.name)}`),
+        ...o.clients.map((c) => `${c.id}: ${clean(c.name)}${clientFacts(c)}`),
         "</clients>",
         "Pass the matching clientId to tools. If the question does not say which client and it matters, ask the user which client they mean.",
+        'A person\'s name (for example "Puneeth") is usually an accountant, not a client: use the accountant in the list above. For tickets across several clients or one accountant\'s clients, use listTicketsAcross instead of calling getTickets once per client.',
       ].join("\n");
 
   return [

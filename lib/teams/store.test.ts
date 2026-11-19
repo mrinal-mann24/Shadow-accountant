@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { describe, expect, it } from 'vitest'
 import type { Database } from '@/lib/db/types'
 import { createFakeSupabase, type FakeOptions, type FakeTables } from '@/lib/data/testing/fake-supabase'
-import { CHANNELS_KEY, isActiveVa, parseChannelMap, supabaseTeamsStore } from './store'
+import { CHANNELS_KEY, isActiveVa, parseChannelMap, parsePersonalChats, PERSONAL_KEY, supabaseTeamsStore } from './store'
 import type { TeamsChannelMap } from './types'
 
 const UNIQUE: FakeOptions = { unique: { teams_notifications: [['kind', 'ref_id']] } }
@@ -48,6 +48,40 @@ describe('channel map', () => {
     expect(fake.tables.settings).toHaveLength(1)
     expect(await store.channels()).toEqual(next)
     expect(fake.calls.filter((c) => c.table === 'settings' && c.op === 'insert')).toHaveLength(1)
+  })
+})
+
+describe('1:1 chats (settings teams_personal)', () => {
+  const chat = { conversationId: 'a:1', serviceUrl: 'https://smba.trafficmanager.net/in/', name: 'Asha', at: '2026-11-19T05:00:00.000Z' }
+
+  it('parsePersonalChats keeps valid entries only, with lower-case emails', () => {
+    expect(parsePersonalChats(null)).toEqual({})
+    expect(parsePersonalChats('not json')).toEqual({})
+    expect(parsePersonalChats('[]')).toEqual({})
+    const value = JSON.stringify({ 'Asha@X.in': chat, 'bad@x.in': { conversationId: 'a:2' }, 'odd@x.in': 'x' })
+    expect(parsePersonalChats(value)).toEqual({ 'asha@x.in': chat })
+  })
+
+  it('savePersonalChat inserts the row, then updates one entry and keeps the others', async () => {
+    const { fake, store } = setup()
+    expect(await store.personalChats()).toEqual({})
+    await store.savePersonalChat('Asha@X.in', chat)
+    await store.savePersonalChat('ravi@x.in', { ...chat, conversationId: 'a:2', name: 'Ravi' })
+    await store.savePersonalChat('asha@x.in', { ...chat, conversationId: 'a:3' })
+    expect(fake.tables.settings).toHaveLength(1)
+    expect(fake.tables.settings[0]).toMatchObject({ key: PERSONAL_KEY })
+    const chats = await store.personalChats()
+    expect(Object.keys(chats).sort()).toEqual(['asha@x.in', 'ravi@x.in'])
+    expect(chats['asha@x.in'].conversationId).toBe('a:3')
+  })
+
+  it('setActivityId can also move the row to the chat that got the card', async () => {
+    const { fake, store } = setup()
+    await store.claim({ kind: 'escalation', ref_id: 'r1', client_id: 'c1', channel_id: 'a:first' })
+    await store.setActivityId('escalation', 'r1', 'act-9', 'a:second')
+    expect(fake.tables.teams_notifications[0]).toMatchObject({ channel_id: 'a:second', activity_id: 'act-9' })
+    await store.setActivityId('escalation', 'r1', 'act-10')
+    expect(fake.tables.teams_notifications[0]).toMatchObject({ channel_id: 'a:second', activity_id: 'act-10' })
   })
 })
 

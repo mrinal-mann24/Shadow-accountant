@@ -5,7 +5,7 @@ import { listClients, scopeOf } from '@/lib/data'
 import { getModel } from '@/lib/ai/openrouter'
 import { createCitationRegistry, formatCitationDate, nextCitationStart } from '@/lib/agent/citations'
 import { buildSystemPrompt } from '@/lib/agent/prompt'
-import { parseChatRequest, resolveChatScope } from '@/lib/agent/scope'
+import { parseChatRequest, resolveChatScope, toScopedClient } from '@/lib/agent/scope'
 import { createChatTools } from '@/lib/agent/tools'
 
 export const dynamic = 'force-dynamic'
@@ -33,7 +33,7 @@ export async function POST(req: Request): Promise<Response> {
   if (!parsed.ok) return jsonError(400, parsed.error)
   const { clientId, messages } = parsed.value
 
-  const clients = (await listClients(user, { status: 'all' })).map((c) => ({ id: c.id, name: c.name }))
+  const clients = (await listClients(user, { status: 'all' })).map(toScopedClient)
   const resolved = resolveChatScope({ clients, canSeeAll: scopeOf(user).all, requestedClientId: clientId })
   if (!resolved.ok) return jsonError(403, resolved.error)
   const scope = resolved.scope

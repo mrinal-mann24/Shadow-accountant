@@ -1256,6 +1256,34 @@ export type Database = {
         }
         Relationships: []
       }
+      // Added by hand from supabase/applied/2026-11-19-teams-chat.sql until the types are regenerated.
+      teams_chat: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          kind: string
+          meta: Json | null
+          user_email: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          kind: string
+          meta?: Json | null
+          user_email: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          meta?: Json | null
+          user_email?: string
+        }
+        Relationships: []
+      }
       va_meeting_transcripts: {
         Row: {
           all_attendees: Json | null

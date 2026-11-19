@@ -17,7 +17,7 @@ import {
   type CitationRegistry,
 } from './citations'
 import { embedModelId, embedTexts } from './models'
-import { searchClientIds, toolClientId, type ChatScope } from './scope'
+import { clientsOfAccountant, searchClientIds, toolClientId, type ChatScope } from './scope'
 import { supabaseAgentStore, type AgentStore, type MessageHit } from './store'
 
 // Read-only tools for the client chat. Every tool is scoped twice: by the chat scope (the user's own client
@@ -51,6 +51,8 @@ export const defaultToolDeps: ToolDeps = {
 
 export const SEARCH_LIMIT = 12
 export const LIST_LIMIT = 25
+/** Tickets shown by listTicketsAcross (counts still cover all of them). */
+export const ACROSS_LIMIT = 30
 const BODY_CHARS = 600
 const EXCERPT_CHARS = 600
 
@@ -198,6 +200,61 @@ export function createChatTools(ctx: Ctx) {
     },
   })
 
+  const listTicketsAcross = tool({
+    description:
+      'Tickets across many clients in one call: all clients the user may see, or only the clients of one accountant (by name, for example "Puneeth"). Open tickets by default. Returns per-client counts and the most recent tickets.',
+    inputSchema: z.object({
+      accountant: z.string().max(100).optional().describe('Accountant name or part of it. Leave out for all clients.'),
+      status: z.enum(['open', 'closed']).optional().describe('Default open.'),
+      slaBreachedOnly: z.boolean().optional().describe('Only tickets past their SLA.'),
+    }),
+    execute: async ({ accountant, status, slaBreachedOnly }) => {
+      if (scope.fixedClientId) return { items: [], error: 'The chat is locked to one client: use getTickets.' }
+      const clients = clientsOfAccountant(scope.clients, accountant)
+      if (clients.length === 0) {
+        const known = [...new Set(scope.clients.map((c) => c.accountant).filter((a): a is string => !!a))].sort()
+        return { items: [], error: `No clients found for accountant "${accountant ?? ''}".`, accountants: known }
+      }
+      const allowed = new Set(clients.map((c) => c.id))
+      const rows = (await deps.listConversations(user, { status: status ?? 'open' })).filter(
+        (t) => allowed.has(t.clientId) && (!slaBreachedOnly || t.slaBreached),
+      )
+      const perClient = new Map<string, number>()
+      for (const t of rows) perClient.set(t.clientId, (perClient.get(t.clientId) ?? 0) + 1)
+      const items = rows.slice(0, ACROSS_LIMIT).map((t) => {
+        const citation = registry.add({
+          kind: 'ticket',
+          id: t.id,
+          clientId: t.clientId,
+          at: t.openedAt,
+          label: ticketLabel(t, timeZone),
+          link: sourceLink('ticket', t.clientId, t.id),
+        })
+        return {
+          n: citation.n,
+          citation,
+          client: names.get(t.clientId) ?? t.clientName,
+          title: t.title ? maskCredentials(t.title) : null,
+          summary: shorten(maskCredentials(t.summary), 200),
+          status: t.status,
+          tag: t.tag,
+          openedAt: t.openedAt,
+          lastMessageAt: t.lastMessageAt,
+          slaBreached: t.slaBreached,
+        }
+      })
+      return {
+        clientsChecked: clients.length,
+        totalTickets: rows.length,
+        shown: items.length,
+        perClient: [...perClient.entries()]
+          .map(([id, count]) => ({ client: names.get(id) ?? id, count }))
+          .sort((a, b) => b.count - a.count),
+        items,
+      }
+    },
+  })
+
   const getFiles = tool({
     description:
       'List files the client shared (saved to SharePoint), newest first. Optional words to match in the file name or folder.',
@@ -325,7 +382,7 @@ export function createChatTools(ctx: Ctx) {
     },
   })
 
-  return { searchMessages, getTickets, getFiles, getMeetings, getClientProfile }
+  return { searchMessages, getTickets, listTicketsAcross, getFiles, getMeetings, getClientProfile }
 }
 
 export type ChatTools = ReturnType<typeof createChatTools>

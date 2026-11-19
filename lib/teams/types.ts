@@ -7,6 +7,8 @@
 //   store.ts keeps the channel map (settings key 'teams_channels') and the teams_notifications table.
 
 import type { AppUser } from '@/lib/auth/types'
+import type { ChatTurn } from '@/lib/agent/scope'
+import type { SaveProposal } from './chat'
 
 // ---------------------------------------------------------------- Bot Framework activities (subset we use)
 
@@ -73,6 +75,17 @@ export type TeamsChannelMap = {
   escalations: TeamsChannelRef | null
 }
 
+/**
+ * settings key 'teams_personal' (JSON): each person's 1:1 chat with Shadow, by login email (lower case). Saved by the
+ * bot when someone opens the Shadow chat or messages it. Cards go here first (lib/teams/routing.ts); a linked channel
+ * is only the fallback.
+ */
+export type PersonalChat = { conversationId: string; serviceUrl: string; name: string | null; at: string }
+export type PersonalChats = Record<string, PersonalChat>
+
+/** Where a card is posted: a 1:1 chat or a channel. */
+export type DeliveryTarget = { id: string; name: string | null; serviceUrl: string }
+
 export type NotificationKind = 'ticket' | 'reminder' | 'escalation' | 'files'
 export type NotificationAction = 'started' | 'closed' | 'not_ticket' | 'reassigned' | 'pinged'
 
@@ -108,13 +121,18 @@ export type TicketForCard = {
 export interface TeamsStore {
   channels(): Promise<TeamsChannelMap | null>
   saveChannels(map: TeamsChannelMap): Promise<void>
+  /** Everyone's 1:1 chat with Shadow ({} when none). */
+  personalChats(): Promise<PersonalChats>
+  /** Saves (or replaces) one person's 1:1 chat. */
+  savePersonalChat(email: string, chat: PersonalChat): Promise<void>
   /** ref_ids of this kind that already have a row. */
   sentRefs(kind: NotificationKind, refIds: string[]): Promise<Set<string>>
   /** Inserts one row. false when (kind, ref_id) already exists (another run sent it): caller must not send again. */
   claim(row: { kind: NotificationKind; ref_id: string; client_id: string | null; channel_id: string }): Promise<boolean>
   /** Releases a claim whose send failed, so the next run retries it. */
   release(kind: NotificationKind, refId: string): Promise<void>
-  setActivityId(kind: NotificationKind, refId: string, activityId: string): Promise<void>
+  /** Saves the posted card's activity id; channelId also moves the row to that chat (the first target failed). */
+  setActivityId(kind: NotificationKind, refId: string, activityId: string, channelId?: string): Promise<void>
   get(kind: NotificationKind, refId: string): Promise<NotificationRow | null>
   recordAction(kind: NotificationKind, refId: string, action: NotificationAction, by: string, at: string): Promise<void>
   /** The ticket for a card, or null when it does not exist. No user scoping: callers check access first. */
@@ -144,4 +162,5 @@ export type ResolveUser = (email: string) => Promise<AppUser | null>
 export type AskShadow = (
   user: AppUser,
   question: string,
-) => Promise<{ text: string; citations: { n: number; label: string; link?: string }[] }>
+  o?: { history?: ChatTurn[]; teams?: boolean },
+) => Promise<{ text: string; citations: { n: number; label: string; link?: string }[]; save?: SaveProposal }>

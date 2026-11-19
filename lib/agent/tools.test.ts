@@ -153,6 +153,38 @@ describe('getTickets / getFiles / getMeetings / getClientProfile', () => {
     expect(listConversations).not.toHaveBeenCalled()
   })
 
+  it("listTicketsAcross keeps only one accountant's clients and counts per client", async () => {
+    const scope: ChatScope = {
+      clients: [
+        { id: 'c1', name: 'Down The Rabbit Hole', accountant: 'Puneeth Kumar', openTickets: 2 },
+        { id: 'c2', name: 'Ayurpet', accountant: 'Harshit', openTickets: 1 },
+      ],
+      fixedClientId: null,
+      allClients: true,
+    }
+    const t2 = { ...ticket, id: 't2', slaBreached: true }
+    const other = { ...ticket, id: 't3', clientId: 'c2', clientName: 'Ayurpet' }
+    const outside = { ...ticket, id: 't4', clientId: 'cX', clientName: 'Hidden' }
+    const listConversations = vi.fn(async () => [ticket, t2, other, outside])
+    const { tools } = setup(scope, { listConversations })
+    const out = await run(tools.listTicketsAcross, { accountant: 'puneeth' })
+    expect(listConversations).toHaveBeenCalledWith(user, { status: 'open' })
+    expect(out.items.map((i: { citation: { id: string } }) => i.citation.id)).toEqual(['t1', 't2'])
+    expect(out).toMatchObject({ clientsChecked: 1, totalTickets: 2, perClient: [{ client: 'Down The Rabbit Hole', count: 2 }] })
+    const breached = await run(tools.listTicketsAcross, { accountant: 'Puneeth', slaBreachedOnly: true })
+    expect(breached.items.map((i: { citation: { id: string } }) => i.citation.id)).toEqual(['t2'])
+  })
+
+  it('listTicketsAcross names the known accountants when the name matches none, and refuses a locked chat', async () => {
+    const scope: ChatScope = { clients: [{ id: 'c1', name: 'DTRH', accountant: 'Ajith' }], fixedClientId: null, allClients: false }
+    const listConversations = vi.fn(async () => [ticket])
+    const { tools } = setup(scope, { listConversations })
+    const out = await run(tools.listTicketsAcross, { accountant: 'Puneeth' })
+    expect(out).toMatchObject({ items: [], accountants: ['Ajith'] })
+    expect((await run(setup(fixedC1, { listConversations }).tools.listTicketsAcross, {})).error).toMatch(/getTickets/)
+    expect(listConversations).not.toHaveBeenCalled()
+  })
+
   it('getFiles filters by words and cites the file name', async () => {
     const listDocuments = vi.fn(async () => [doc('f1', 'HDFC Bank Statement Oct.pdf'), doc('f2', 'Sales Oct.xlsx')])
     const { tools } = setup(fixedC1, { listDocuments })

@@ -65,10 +65,12 @@ import {
   type PilotClient,
   type UploadForNotify,
 } from './notify-store'
+import type { AppUser } from '@/lib/auth/types'
 import type {
   NotificationKind,
   NotificationRow,
   OutgoingActivity,
+  PersonalChats,
   TeamsChannelMap,
   TeamsConnector,
   TeamsStore,
@@ -150,7 +152,9 @@ function fakeReads(o: { tickets?: TicketForCard[]; created?: Record<string, stri
 
 type FakeStore = TeamsStore & { rows: Map<string, NotificationRow>; released: string[]; claimResult?: boolean }
 
-function fakeStore(o: { map?: TeamsChannelMap | null; rows?: NotificationRow[]; claimResult?: boolean } = {}): FakeStore {
+function fakeStore(
+  o: { map?: TeamsChannelMap | null; rows?: NotificationRow[]; claimResult?: boolean; chats?: PersonalChats } = {},
+): FakeStore {
   const key = (k: NotificationKind, ref: string) => `${k}:${ref}`
   const rows = new Map<string, NotificationRow>((o.rows ?? []).map((r) => [key(r.kind, r.ref_id), r]))
   const store: FakeStore = {
@@ -159,6 +163,8 @@ function fakeStore(o: { map?: TeamsChannelMap | null; rows?: NotificationRow[]; 
     claimResult: o.claimResult,
     channels: async () => (o.map === undefined ? MAP : o.map),
     saveChannels: async () => {},
+    personalChats: async () => structuredClone(o.chats ?? {}),
+    savePersonalChat: async () => {},
     sentRefs: async (kind, refs) => new Set(refs.filter((r) => rows.has(key(kind, r)))),
     claim: vi.fn(async (r) => {
       if (store.claimResult === false) return false
@@ -177,9 +183,10 @@ function fakeStore(o: { map?: TeamsChannelMap | null; rows?: NotificationRow[]; 
       rows.delete(key(kind, ref))
       store.released.push(key(kind, ref))
     }),
-    setActivityId: vi.fn(async (kind, ref, id) => {
+    setActivityId: vi.fn(async (kind, ref, id, channelId) => {
       const r = rows.get(key(kind, ref))
       if (r) r.activity_id = id
+      if (r && channelId) r.channel_id = channelId
     }),
     get: async (kind, ref) => rows.get(key(kind, ref)) ?? null,
     recordAction: async () => {},
@@ -278,17 +285,145 @@ describe('runTeamsNotifyJob new tickets', () => {
     )
     expect(connector.sent.map((s) => s.conversationId)).toEqual(['ch-esc'])
     expect(res.written).toBe(1)
-    expect(res.errors).toEqual([expect.stringMatching(/No Teams channel linked for accountant Asha \(va1\): 1 card/)])
+    expect(res.errors).toEqual([expect.stringMatching(/Accountant Asha \(va1\) has not opened Shadow in Teams: 1 card/)])
   })
 
-  it('skips with an error when neither the accountant nor Escalations is linked', async () => {
+  it('skips with an error when the accountant is not reachable and nobody gets escalations', async () => {
+    const map: TeamsChannelMap = { ...MAP, accountants: { va2: MAP.accountants.va2 }, escalations: null }
+    const connector = fakeConnector()
+    const res = await run(
+      deps({ reads: fakeReads({ tickets: [ticket({ id: 't1', lastMessageDirection: 'outgoing' })] }), store: fakeStore({ map }), connector }),
+    )
+    expect(connector.sent).toEqual([])
+    expect(res.errors.join('\n')).toMatch(/Nowhere to send in Teams .*ticket t1 \(Acme\)/)
+  })
+
+  it('sends nothing, with a note and no error, when nobody has opened Shadow and nothing is linked', async () => {
     const map: TeamsChannelMap = { ...MAP, accountants: {}, escalations: null }
     const connector = fakeConnector()
     const res = await run(
       deps({ reads: fakeReads({ tickets: [ticket({ id: 't1', lastMessageDirection: 'outgoing' })] }), store: fakeStore({ map }), connector }),
     )
     expect(connector.sent).toEqual([])
-    expect(res.errors.join('\n')).toMatch(/No Teams channel to send to .*ticket t1 \(Acme\)/)
+    expect(res.errors).toEqual([])
+    expect((res.details as { note: string }).note).toBe(NO_CHANNELS_ERROR)
+  })
+})
+
+describe('runTeamsNotifyJob 1:1 chats', () => {
+  const SVC = 'https://smba.trafficmanager.net/in/'
+  const chat = (id: string) => ({ conversationId: id, serviceUrl: SVC, name: null, at: '' })
+  const people: Record<string, AppUser> = {
+    'asha@x.in': { id: 'u1', email: 'asha@x.in', name: 'Asha', role: 'senior_accountant', vaId: 'va1' },
+    'raghav@x.in': { id: 'u2', email: 'raghav@x.in', name: 'Raghav', role: 'admin', vaId: null },
+    'priya@x.in': { id: 'u3', email: 'priya@x.in', name: 'Priya', role: 'admin', vaId: null },
+    'eng@x.in': { id: 'u4', email: 'eng@x.in', name: 'Eng', role: 'engineer', vaId: null },
+  }
+  const chats: PersonalChats = {
+    'asha@x.in': chat('a:asha'),
+    'raghav@x.in': chat('a:raghav'),
+    'priya@x.in': chat('a:priya'),
+    'eng@x.in': chat('a:eng'),
+    'gone@x.in': chat('a:gone'), // no access any more
+  }
+  const resolveUser = async (email: string) => people[email] ?? null
+  const waiting = ticket({ id: 'w1', openedAt: ist('2026-11-14T10:00:00'), lastMessageAt: ist('2026-11-16T10:00:00') })
+  const created = { w1: ist('2026-11-14T10:00:00') }
+
+  it('sends the accountant cards to their 1:1 chat and escalations to every Admin and Engineer, never to someone without access', async () => {
+    const store = fakeStore({ chats })
+    const connector = fakeConnector()
+    const res = await run(
+      deps({
+        reads: fakeReads({ tickets: [ticket({ id: 'new1', lastMessageDirection: 'outgoing' }), waiting], created }),
+        store,
+        connector,
+        resolveUser,
+      }),
+    )
+    const to = (kind: string) => connector.sent.filter((s) => s.card.kind === kind).map((s) => s.conversationId)
+    expect(to('ticket')).toEqual(['a:asha'])
+    expect(to('reminder')).toEqual(['a:asha'])
+    expect(to('escalation')).toEqual(['a:raghav', 'a:priya', 'a:eng'])
+    expect(connector.sent.map((s) => s.conversationId)).not.toContain('a:gone')
+    expect(connector.sent.map((s) => s.conversationId)).not.toContain('ch-esc')
+    // One claim row for the escalation, pointing at the first copy.
+    expect(store.rows.get(`escalation:w1@${ist('2026-11-16T10:00:00')}`)).toMatchObject({ channel_id: 'a:raghav' })
+    expect(res.errors).toEqual([])
+    expect((res.details as { warnings?: string[] }).warnings).toEqual([expect.stringMatching(/gone@x\.in: no access/)])
+  })
+
+  it('an accountant who has not opened Shadow falls back to their linked channel; with no channel at all, to the escalation chats', async () => {
+    const connector = fakeConnector()
+    const t = ticket({ id: 'b1', clientId: 'c2', clientName: 'Beta', vaId: 'va2', vaName: 'Bala', lastMessageDirection: 'outgoing' })
+    await run(deps({ reads: fakeReads({ tickets: [t] }), store: fakeStore({ chats }), connector, resolveUser }))
+    expect(connector.sent.map((s) => s.conversationId)).toEqual(['ch-va2'])
+
+    const none = fakeConnector()
+    const res = await run(deps({ reads: fakeReads({ tickets: [t] }), store: fakeStore({ chats, map: null }), connector: none, resolveUser }))
+    expect(none.sent.map((s) => s.conversationId)).toEqual(['a:raghav', 'a:priya', 'a:eng'])
+    expect(res.errors).toEqual([expect.stringMatching(/Accountant Bala \(va2\) has not opened Shadow in Teams/)])
+  })
+
+  it('works with no team channels at all (only 1:1 chats)', async () => {
+    const connector = fakeConnector()
+    const res = await run(
+      deps({ reads: fakeReads({ tickets: [ticket({ id: 'n1', lastMessageDirection: 'outgoing' })] }), store: fakeStore({ chats, map: null }), connector, resolveUser }),
+    )
+    expect(connector.sent.map((s) => s.conversationId)).toEqual(['a:asha'])
+    expect(res.written).toBe(1)
+  })
+
+  it('one failed escalation copy keeps the claim (no resend), reports it, and points the row at a copy that went out', async () => {
+    const store = fakeStore({ chats })
+    const connector = fakeConnector()
+    vi.mocked(connector.send).mockImplementation(async (_u, conversationId, activity) => {
+      if (conversationId === 'a:raghav') throw new Error('Teams said 502')
+      const card = activity.attachments![0].content as unknown as Record<string, unknown>
+      connector.sent.push({ conversationId, card })
+      return { id: `act-${conversationId}` }
+    })
+    const res = await run(deps({ reads: fakeReads({ tickets: [waiting], created }), store, connector, resolveUser }))
+    const ref = `w1@${ist('2026-11-16T10:00:00')}`
+    expect(store.rows.get(`escalation:${ref}`)).toMatchObject({ channel_id: 'a:priya', activity_id: 'act-a:priya' })
+    expect(store.release).not.toHaveBeenCalledWith('escalation', ref)
+    expect(res.errors).toEqual([expect.stringMatching(/escalation .* copy to Raghav \(1:1\): Teams said 502/)])
+  })
+
+  it("when the accountant's own lookup fails, their card waits for the next run: not sent to the Admins, not claimed", async () => {
+    const store = fakeStore({ chats })
+    const connector = fakeConnector()
+    const flaky = async (email: string) => {
+      if (email === 'asha@x.in') throw new Error('auth down')
+      return people[email] ?? null
+    }
+    const res = await run(
+      deps({ reads: fakeReads({ tickets: [ticket({ id: 'n1', lastMessageDirection: 'outgoing' })] }), store, connector, resolveUser: flaky }),
+    )
+    expect(connector.sent).toEqual([])
+    expect(store.rows.size).toBe(0)
+    expect((res.details as { held: { cards: string[] } }).held.cards).toEqual(['Asha: Acme'])
+    // Next run, the lookup works again: the card goes to Asha.
+    await run(deps({ reads: fakeReads({ tickets: [ticket({ id: 'n1', lastMessageDirection: 'outgoing' })] }), store, connector, resolveUser }))
+    expect(connector.sent.map((s) => s.conversationId)).toEqual(['a:asha'])
+  })
+
+  it('does no role lookups when there is nothing to send', async () => {
+    const lookups = vi.fn(resolveUser)
+    const res = await run(deps({ reads: fakeReads({}), store: fakeStore({ chats }), connector: fakeConnector(), resolveUser: lookups }))
+    expect(lookups).not.toHaveBeenCalled()
+    expect(res.processed).toBe(0)
+  })
+
+  it('a lookup failure skips that person with a warning and the rest still get cards', async () => {
+    const connector = fakeConnector()
+    const flaky = async (email: string) => {
+      if (email === 'raghav@x.in') throw new Error('auth down')
+      return people[email] ?? null
+    }
+    const res = await run(deps({ reads: fakeReads({ tickets: [waiting], created }), store: fakeStore({ chats }), connector, resolveUser: flaky }))
+    expect(connector.sent.filter((s) => s.card.kind === 'escalation').map((s) => s.conversationId)).toEqual(['a:priya', 'a:eng'])
+    expect((res.details as { warnings: string[] }).warnings.join('\n')).toMatch(/raghav@x\.in: lookup failed \(auth down\)/)
   })
 })
 
