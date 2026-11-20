@@ -181,42 +181,56 @@ export const isUnreadable = (r: FindResult): r is UnreadableFile => !!r && 'unre
 /** How the synced SharePoint library folder starts ("VA Documents - Documents"). */
 const LIBRARY_PREFIX = 'va documents'
 
+const errName = (e: unknown) => (e instanceof Error ? e.name || e.message : String(e))
+
 async function findUnder(
   root: FolderHandle,
   prefix: string[],
   f: { folderName: string; uploadedAt: string | null; parentFolder?: string | null; fileName: string; fileSize: number | null },
+  trace: string[],
 ): Promise<FindResult> {
+  // The size WhatsApp reported (logged by va-bot) is not always the size of the saved file, so it only decides
+  // between two files with the same name ("x.pdf" and "x_1.pdf"); a single match is used without a warning.
   const knownSize = typeof f.fileSize === 'number' && f.fileSize > 0 ? f.fileSize : null
-  let unsure: FoundFile | null = null
+  const matches: FoundFile[] = []
   let unreadable: UnreadableFile | null = null
   for (const folder of candidateFolders(f)) {
     let dir: FolderHandle = root
-    try {
-      for (const part of folder) dir = await dir.getDirectoryHandle(part)
-    } catch {
-      continue // this folder does not exist here
+    let reached = true
+    for (const part of folder) {
+      try {
+        dir = await dir.getDirectoryHandle(part)
+      } catch (e) {
+        trace.push(`${[...prefix, ...folder].join(' / ')}: no folder "${part}" (${errName(e)})`)
+        reached = false
+        break
+      }
     }
+    if (!reached) continue
     for (const name of candidateNames(f.fileName)) {
       let handle: { getFile(): Promise<File> }
       try {
         handle = await dir.getFileHandle(name)
-      } catch {
-        continue // no file with this name
+      } catch (e) {
+        if (name === f.fileName) trace.push(`${[...prefix, ...folder].join(' / ')}: no file "${name}" (${errName(e)})`)
+        continue
       }
       const path = [...prefix, ...folder, name].join(' / ')
       let file: File
       try {
         file = await handle.getFile()
-      } catch {
+      } catch (e) {
+        trace.push(`${path}: found but not readable (${errName(e)})`)
         unreadable ??= { unreadable: path } // there, but OneDrive could not hand it over
         continue
       }
-      if (knownSize === null) return { file, path, sizeMatches: null }
-      if (file.size === knownSize) return { file, path, sizeMatches: true }
-      unsure ??= { file, path, sizeMatches: false }
+      if (knownSize !== null && file.size === knownSize) return { file, path, sizeMatches: true }
+      matches.push({ file, path, sizeMatches: knownSize === null ? null : false })
     }
+    if (matches.length) break // the most likely folder had it: do not mix in copies from less likely folders
   }
-  return unsure ?? unreadable
+  if (matches.length === 1) return { ...matches[0], sizeMatches: null }
+  return matches[0] ?? unreadable
 }
 
 /**
@@ -228,21 +242,23 @@ async function findUnder(
 export async function findLocalFile(
   root: FolderHandle,
   f: { folderName: string; uploadedAt: string | null; parentFolder?: string | null; fileName: string | null; fileSize: number | null },
+  /** Filled with one line per place checked and why it failed, for the "What Shadow checked" details. */
+  trace: string[] = [],
 ): Promise<FindResult> {
   if (!f.fileName) return null
   const file = { ...f, fileName: f.fileName }
-  const direct = await findUnder(root, [], file)
+  const direct = await findUnder(root, [], file, trace)
   if (direct && !isUnreadable(direct)) return direct
   // A higher folder (for example the whole OneDrive folder): look inside the synced library folder(s).
   if (root.values) {
     try {
       for await (const entry of root.values()) {
         if (entry.kind !== 'directory' || !entry.name.toLowerCase().startsWith(LIBRARY_PREFIX)) continue
-        const hit = await findUnder(await root.getDirectoryHandle(entry.name), [entry.name], file)
+        const hit = await findUnder(await root.getDirectoryHandle(entry.name), [entry.name], file, trace)
         if (hit && !isUnreadable(hit)) return hit
       }
-    } catch {
-      // cannot list this folder: keep what was found
+    } catch (e) {
+      trace.push(`Could not list the connected folder (${errName(e)})`)
     }
   }
   return direct

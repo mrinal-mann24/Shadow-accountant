@@ -163,11 +163,25 @@ describe('findLocalFile', () => {
     expect(hit).toMatchObject({ path: 'Client Files / KRRD / inv_1.pdf', sizeMatches: true })
   })
 
-  it('returns a size-mismatch file as unsure when nothing matches, and null when nothing is there', async () => {
-    const unsure = await findLocalFile(tree({ 'Client Files/KRRD/2026-11-19/inv.pdf': 99 }), f)
-    expect(unsure).toMatchObject({ sizeMatches: false })
+  it('uses a single same-name file even when the logged size differs (WhatsApp sizes are not exact)', async () => {
+    // Real case: va-bot logged 28665 bytes, the synced file is 37280.
+    const one = await findLocalFile(tree({ 'Client Files/KRRD/2026-11-19/inv.pdf': 99 }), f)
+    expect(one).toMatchObject({ path: 'Client Files / KRRD / 2026-11-19 / inv.pdf', sizeMatches: null })
+  })
+
+  it('warns only when two same-name files exist and neither has the logged size; null when nothing is there', async () => {
+    const two = await findLocalFile(tree({ 'Client Files/KRRD/2026-11-19/inv.pdf': 99, 'Client Files/KRRD/2026-11-19/inv_1.pdf': 98 }), f)
+    expect(two).toMatchObject({ path: 'Client Files / KRRD / 2026-11-19 / inv.pdf', sizeMatches: false })
     expect(await findLocalFile(tree({}), f)).toBeNull()
     expect(await findLocalFile(tree({ 'Client Files/KRRD/2026-11-19/inv.pdf': 10 }), { ...f, fileName: null })).toBeNull()
+  })
+
+  it('records where each attempt stopped, for the "What Shadow checked" details', async () => {
+    const trace: string[] = []
+    expect(await findLocalFile(tree({ 'KRRD/2026-11-18/other.pdf': 1 }), f, trace)).toBeNull()
+    expect(trace).toContain('Client Files / KRRD / 2026-11-19: no folder "Client Files" (NotFoundError)')
+    expect(trace).toContain('KRRD / 2026-11-19: no folder "2026-11-19" (NotFoundError)')
+    expect(trace).toContain('KRRD / 2026-11-18: no file "inv.pdf" (NotFoundError)')
   })
 
   it('finds the library inside a higher folder (the whole OneDrive folder)', async () => {

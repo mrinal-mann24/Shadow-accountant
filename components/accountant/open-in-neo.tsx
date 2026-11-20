@@ -71,6 +71,8 @@ export function OpenInNeo({ file }: { file: NeoFile }) {
   const [company, setCompany] = useState(file.companyName)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [folderSupported, setFolderSupported] = useState(false)
+  /** Where the last search looked and why each place failed (shown when the file is not found). */
+  const [checks, setChecks] = useState<string[]>([])
   const pickerRef = useRef<HTMLInputElement>(null)
   const urlRef = useRef<string | null>(null)
   // Bumped when the dialog closes or a new search starts, so a slow search never fills a closed or newer dialog.
@@ -112,8 +114,14 @@ export function OpenInNeo({ file }: { file: NeoFile }) {
   async function search(f: BrowserFolder) {
     const run = ++runRef.current
     setStatus({ kind: 'searching' })
-    const hit = await findLocalFile(f, file).catch(() => null)
+    const trace: string[] = []
+    const hit = await findLocalFile(f, file, trace).catch((e: unknown) => {
+      trace.push(`Search stopped: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`)
+      return null
+    })
     if (runRef.current !== run) return // closed, or another search started
+    setChecks(trace)
+    if (!hit || isUnreadable(hit)) console.warn('[open-in-neo] not found', { folder: f.name, file: file.fileName, checked: trace })
     if (isUnreadable(hit)) {
       show(null)
       setStatus({ kind: 'unreadable', path: hit.unreadable })
@@ -282,6 +290,18 @@ export function OpenInNeo({ file }: { file: NeoFile }) {
                   Choose file
                 </Button>
               </div>
+              {(status.kind === 'not_found' || status.kind === 'unreadable') && checks.length > 0 && (
+                <details className="rounded-md border p-2 text-xs text-muted-foreground">
+                  <summary className="cursor-pointer select-none">What Shadow checked</summary>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                    {checks.slice(0, 16).map((c, i) => (
+                      <li key={i} className="break-all">
+                        {c}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
               {folderSupported && folder && (
                 <p className="break-all text-xs text-muted-foreground">
                   Connected folder: <span className="font-medium text-foreground">{folder.name || 'unnamed'}</span>. Pick your synced
