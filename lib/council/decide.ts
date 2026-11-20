@@ -38,8 +38,10 @@ export function validateVote(vote: Vote, ctx: Pick<CouncilContext, 'open' | 'rec
  * 1. Same decision and same target: that decision, agreed. Metadata from A.
  * 2. One says new, the other says continue: continue on the continue voter's target (not agreed).
  *    Better to add to an open ticket than to open a duplicate.
- * 3. close and reopen happen only when both agree on the same target (rule 1).
- * 4. Anything else: no_action, not agreed.
+ * 3. One says close, the other continue, on the same ticket: continue on it (not agreed). Both agree the message
+ *    belongs to that ticket, so it is added (a team reply then counts as the reply); closing still needs both.
+ * 4. close and reopen happen only when both agree on the same target (rule 1).
+ * 5. Anything else: no_action, not agreed.
  */
 export function combineVotes(a: Vote, b: Vote): FinalDecision {
   if (a.decision === b.decision && (a.target_conversation_id ?? null) === (b.target_conversation_id ?? null)) {
@@ -56,6 +58,13 @@ export function combineVotes(a: Vote, b: Vote): FinalDecision {
   }
   if (a.decision === 'new' && b.decision === 'continue') {
     return { decision: 'continue', targetConversationId: b.target_conversation_id, agreed: false, source: 'B', rule: 'new vs continue: continue wins' }
+  }
+  const sameTarget = !!a.target_conversation_id && a.target_conversation_id === b.target_conversation_id
+  if (sameTarget && a.decision === 'continue' && b.decision === 'close') {
+    return { decision: 'continue', targetConversationId: a.target_conversation_id, agreed: false, source: 'A', rule: 'close vs continue on the same ticket: continue' }
+  }
+  if (sameTarget && a.decision === 'close' && b.decision === 'continue') {
+    return { decision: 'continue', targetConversationId: b.target_conversation_id, agreed: false, source: 'B', rule: 'close vs continue on the same ticket: continue' }
   }
   return {
     decision: 'no_action',

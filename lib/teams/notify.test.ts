@@ -124,8 +124,16 @@ function upload(p: Partial<UploadForNotify> & { uploadId: string }): UploadForNo
   }
 }
 
+/** A message our team sent in a client's group. processed: the council has read it (conversationId is its ticket, or null). */
+type TeamMessage = { clientId: string; at: string; conversationId: string | null; processed: boolean }
+
 /** Reads that apply the same filters the SQL does, from in-memory rows. */
-function fakeReads(o: { tickets?: TicketForCard[]; created?: Record<string, string>; uploads?: UploadForNotify[] }): NotifyReads {
+function fakeReads(o: {
+  tickets?: TicketForCard[]
+  created?: Record<string, string>
+  uploads?: UploadForNotify[]
+  team?: TeamMessage[]
+}): NotifyReads {
   const tickets = o.tickets ?? []
   const createdAt = (t: TicketForCard) => o.created?.[t.id] ?? t.openedAt
   return {
@@ -147,6 +155,17 @@ function fakeReads(o: { tickets?: TicketForCard[]; created?: Record<string, stri
           t.lastMessageAt >= f.lastMessageSince,
       ),
     newUploads: async (ids, f) => (o.uploads ?? []).filter((u) => ids.includes(u.clientId) && u.uploadedAt >= f.uploadedSince),
+    // Same rule as the SQL: a team message after the ticket's last client message, on this ticket or not read yet.
+    repliedTickets: async (list) =>
+      new Set(
+        list
+          .filter((t) =>
+            (o.team ?? []).some(
+              (m) => m.clientId === t.clientId && m.at > t.lastMessageAt && (!m.processed || m.conversationId === t.id),
+            ),
+          )
+          .map((t) => t.id),
+      ),
   }
 }
 
@@ -468,6 +487,40 @@ describe('runTeamsNotifyJob waiting tickets', () => {
       card: { waitingMinutes: 120, accountants: [{ vaId: 'va1', name: 'Asha' }, { vaId: 'va2', name: 'Bala' }] },
     })
     expect(connector.sent.find((s) => s.card.kind === 'reminder')?.conversationId).toBe('ch-va1')
+  })
+
+  it('no reminder when the team replied on this ticket, or replied and the council has not read it yet (KRRD 20 Nov)', async () => {
+    const connector = fakeConnector()
+    const t = waitingTicket('2026-11-16T10:00:00')
+    const replies: TeamMessage[] = [
+      { clientId: 'c1', at: ist('2026-11-16T10:01:00'), conversationId: 'w1', processed: true },
+      { clientId: 'c1', at: ist('2026-11-16T10:01:00'), conversationId: null, processed: false },
+    ]
+    for (const reply of replies) {
+      await run(deps({ reads: fakeReads({ tickets: [t], created, team: [reply] }), store: fakeStore(), connector }))
+    }
+    expect(connector.sent).toEqual([])
+  })
+
+  it('not a reply: a team message the council put on another ticket or judged no_action, another group, or earlier', async () => {
+    const team: TeamMessage[] = [
+      { clientId: 'c1', at: ist('2026-11-16T10:30:00'), conversationId: 'other-ticket', processed: true },
+      { clientId: 'c1', at: ist('2026-11-16T10:31:00'), conversationId: null, processed: true }, // "hello sir" next day: no_action
+      { clientId: 'c2', at: ist('2026-11-16T10:30:00'), conversationId: null, processed: false },
+      { clientId: 'c1', at: ist('2026-11-16T09:59:00'), conversationId: null, processed: false },
+    ]
+    for (const m of team) {
+      const connector = fakeConnector()
+      await run(deps({ reads: fakeReads({ tickets: [waitingTicket('2026-11-16T10:00:00')], created, team: [m] }), store: fakeStore(), connector }))
+      expect(connector.sent.map((x) => (x.card as { kind?: string }).kind).sort()).toEqual(['escalation', 'reminder'])
+    }
+  })
+
+  it('a team reply also stops the escalation at 120 business minutes', async () => {
+    const connector = fakeConnector()
+    const team: TeamMessage[] = [{ clientId: 'c1', at: ist('2026-11-16T11:00:00'), conversationId: 'w1', processed: true }]
+    await run(deps({ reads: fakeReads({ tickets: [waitingTicket('2026-11-16T10:00:00')], created, team }), store: fakeStore(), connector }))
+    expect(connector.sent).toEqual([])
   })
 
   it('waiting does not grow outside business hours (Sat 18:50 to Mon 10:05 is 15 minutes)', async () => {

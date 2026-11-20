@@ -72,9 +72,14 @@ describe('combineVotes', () => {
 
   it('closes or reopens only when both agree on the same ticket', () => {
     expect(combineVotes(v('close', 'x'), v('close', 'x'))).toMatchObject({ decision: 'close', agreed: true })
-    expect(combineVotes(v('close', 'x'), v('continue', 'x'))).toMatchObject({ decision: 'no_action', agreed: false })
+    expect(combineVotes(v('close', 'x'), v('continue', 'y'))).toMatchObject({ decision: 'no_action', agreed: false })
     expect(combineVotes(v('reopen', 'x'), v('no_action'))).toMatchObject({ decision: 'no_action', agreed: false })
     expect(combineVotes(v('reopen', 'x'), v('new'))).toMatchObject({ decision: 'no_action', agreed: false })
+  })
+
+  it('close vs continue on the same ticket adds the message to it without closing (KRRD 20 Nov: "GSTR3B filed")', () => {
+    expect(combineVotes(v('continue', 'x'), v('close', 'x'))).toMatchObject({ decision: 'continue', targetConversationId: 'x', agreed: false, source: 'A' })
+    expect(combineVotes(v('close', 'x'), v('continue', 'x'))).toMatchObject({ decision: 'continue', targetConversationId: 'x', agreed: false, source: 'B' })
   })
 
   it('same decision on different tickets is no_action', () => {

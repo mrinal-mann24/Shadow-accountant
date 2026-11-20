@@ -8,6 +8,7 @@
  *
  * --offline   no model calls. Old votes agreement, and the new tie-break rule replayed on the old votes.
  * --limit N   (default 50) most recent N verdicts. Without --offline, each one costs two model calls.
+ * --message ID   only this message (client_messages.message_id); prints both votes and the final decision.
  * --conditions=react-server lets the server-only modules load outside Next.
  *
  * Known limit: ticket titles and summaries are today's values, not as they were at message time,
@@ -67,12 +68,15 @@ async function main(): Promise<void> {
   const li = args.indexOf('--limit')
   const limit = li >= 0 ? Math.max(1, Number.parseInt(args[li + 1] ?? '50', 10) || 50) : 50
 
+  const mi = args.indexOf('--message')
+  const onlyMessage = mi >= 0 ? (args[mi + 1] ?? null) : null
+
   const db = createAdminSupabase()
-  const { data: verdicts, error } = await db
+  let query = db
     .from('council_verdicts')
     .select('message_id, claude_decision, claude_target_conv_id, gpt_decision, gpt_target_conv_id, final_decision, final_conv_id, agreed, created_at')
-    .order('created_at', { ascending: false })
-    .limit(limit)
+  if (onlyMessage) query = query.eq('message_id', onlyMessage)
+  const { data: verdicts, error } = await query.order('created_at', { ascending: false }).limit(limit)
   if (error) throw new Error(error.message)
   const rows = verdicts ?? []
   console.log(`Loaded ${rows.length} verdicts (most recent ${limit}).`)
@@ -113,6 +117,15 @@ async function main(): Promise<void> {
       const prompt = buildCouncilPrompt(ctx)
       const [ra, rb] = await Promise.all([withOneRetry(() => askModel('A', prompt)), withOneRetry(() => askModel('B', prompt))])
       const final = combineVotes(validateVote(ra.vote, ctx), validateVote(rb.vote, ctx))
+      if (onlyMessage) {
+        console.log(`
+A ${ra.model}: ${ra.vote.decision} ${ra.vote.target_conversation_id ?? ''}
+   ${ra.vote.reasoning}`)
+        console.log(`B ${rb.model}: ${rb.vote.decision} ${rb.vote.target_conversation_id ?? ''}
+   ${rb.vote.reasoning}`)
+        console.log(`Final: ${final.decision} ${final.targetConversationId ?? ''} (${final.rule})
+Summary (A): ${ra.vote.summary}`)
+      }
       live[bucket(v.final_decision)][final.decision]++
       if (final.decision === v.final_decision) {
         liveAgree++

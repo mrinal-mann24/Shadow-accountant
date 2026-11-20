@@ -33,7 +33,16 @@ export interface NotifyReads {
   waitingTickets(clients: PilotClient[], o: { lastMessageSince: string } & ReadWarn): Promise<TicketForCard[]>
   /** uploaded_at >= uploadedSince, oldest first. */
   newUploads(clientIds: string[], o: { uploadedSince: string } & ReadWarn): Promise<UploadForNotify[]>
+  /**
+   * Ids of the tickets our team has already answered: a team message in the client's group after the ticket's last
+   * client message that the council linked to this ticket, or that the council has not read yet (it runs every 15
+   * minutes, reminders every 5). A team message the council put on another ticket or judged not a reply (no_action)
+   * does not count: the council reads the conversation, so "hello sir" a day later is not taken as an answer.
+   */
+  repliedTickets(tickets: WaitingRef[]): Promise<Set<string>>
 }
+
+export type WaitingRef = Pick<TicketForCard, 'id' | 'clientId' | 'lastMessageAt'>
 
 const TICKET_COLUMNS =
   'id, client_id, status, opened_at, created_at, last_message_at, last_message_direction, va_id, sla_breached, title, summary, tag'
@@ -151,6 +160,26 @@ export function supabaseNotifyReads(db: SupabaseClient<Database>): NotifyReads {
       fail('waiting tickets', error)
       warnIfCapped('waiting tickets', data, o)
       return toCards(data ?? [], clients)
+    },
+
+    async repliedTickets(tickets) {
+      // One exact existence check per waiting ticket (only overdue ones reach here, so a handful): no shared row cap
+      // can hide a recent reply.
+      const replied = await Promise.all(
+        tickets.map(async (t) => {
+          const { data, error } = await db
+            .from('client_messages')
+            .select('message_id')
+            .eq('client_id', t.clientId)
+            .eq('direction', 'outgoing')
+            .gt('message_timestamp', t.lastMessageAt)
+            .or(`processed_at.is.null,conversation_id.eq.${t.id}`)
+            .limit(1)
+          fail('team replies', error)
+          return (data?.length ?? 0) > 0 ? t.id : null
+        }),
+      )
+      return new Set(replied.filter((id): id is string => id !== null))
     },
 
     async newUploads(clientIds, o) {

@@ -196,10 +196,13 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
     })
   }
 
-  // 2. Client messages waiting on a reply (business minutes, Mon to Sat 10:00 to 19:00).
-  const due = waiting
+  // 2. Client messages waiting on a reply (business minutes, Mon to Sat 10:00 to 19:00). A team reply the council has
+  // not read yet (it runs every 15 minutes) also holds the reminder; see NotifyReads.repliedTickets.
+  const overdue = waiting
     .map((t) => ({ t, minutes: businessMinutesBetween(new Date(t.lastMessageAt), o.now, tz), ref: waitRef(t) }))
     .filter((w) => w.minutes >= REMIND_AFTER_MINUTES)
+  const answered = overdue.length ? await reads.repliedTickets(overdue.map((w) => w.t)) : new Set<string>()
+  const due = overdue.filter((w) => !answered.has(w.t.id))
   const refs = due.map((w) => w.ref)
   const [sentReminders, sentEscalations] = await Promise.all([
     store.sentRefs('reminder', refs),
