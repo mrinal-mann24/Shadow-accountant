@@ -282,6 +282,12 @@ export function OpenInNeo({ file }: { file: NeoFile }) {
                   Choose file
                 </Button>
               </div>
+              {folderSupported && folder && (
+                <p className="break-all text-xs text-muted-foreground">
+                  Connected folder: <span className="font-medium text-foreground">{folder.name || 'unnamed'}</span>. Pick your synced
+                  &quot;Client Files&quot; folder (or &quot;VA Documents - Documents&quot;) if this is a different one.
+                </p>
+              )}
               {folderSupported && !folder && (
                 <p className="text-xs text-muted-foreground">
                   Connect once: pick your synced &quot;Client Files&quot; folder (or the library folder above it). Shadow then finds
