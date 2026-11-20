@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { ActivityFeed } from '@/components/accountant/activity-feed'
 import { BucketControl } from '@/components/accountant/bucket-control'
 import { FilesGrid } from '@/components/accountant/files-grid'
+import { ScrollToHash } from '@/components/accountant/scroll-to-hash'
 import { FollowUpsPanel } from '@/components/accountant/follow-ups'
 import { ticketReadOnlyNote, formatDate, formatDateTime, safeHref } from '@/components/accountant/logic'
 import { TicketList } from '@/components/accountant/ticket-list'
@@ -76,6 +77,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
 
   return (
     <div className="mx-auto max-w-6xl">
+      <ScrollToHash />
       <Link href="/clients" className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="size-4" aria-hidden />
         All clients
