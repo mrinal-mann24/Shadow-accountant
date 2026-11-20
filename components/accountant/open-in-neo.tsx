@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { displayPath, findLocalFile, neoErrorMessage, neoHandoffUrl, sendToNeo, type FoundFile } from '@/lib/neo/handoff'
+import { displayPath, findLocalFile, isUnreadable, neoErrorMessage, neoHandoffUrl, sendToNeo, type FoundFile } from '@/lib/neo/handoff'
 import { canConnectFolder, connectFolder, ensureReadAccess, forgetFolder, loadFolder, type BrowserFolder } from '@/lib/neo/local-folder'
 
 export type NeoFile = {
@@ -56,6 +56,7 @@ type Status =
   | { kind: 'idle' }
   | { kind: 'searching' }
   | { kind: 'not_found' }
+  | { kind: 'unreadable'; path: string }
   | { kind: 'no_access' }
   | { kind: 'sending' }
   | { kind: 'sent'; id: string | null }
@@ -113,6 +114,11 @@ export function OpenInNeo({ file }: { file: NeoFile }) {
     setStatus({ kind: 'searching' })
     const hit = await findLocalFile(f, file).catch(() => null)
     if (runRef.current !== run) return // closed, or another search started
+    if (isUnreadable(hit)) {
+      show(null)
+      setStatus({ kind: 'unreadable', path: hit.unreadable })
+      return
+    }
     show(hit)
     setStatus(hit ? { kind: 'idle' } : { kind: 'not_found' })
   }
@@ -250,12 +256,25 @@ export function OpenInNeo({ file }: { file: NeoFile }) {
                   yourself, or connect another folder.
                 </p>
               )}
+              {status.kind === 'unreadable' && (
+                <p className="break-all text-warning">
+                  Found the file ({status.path}), but OneDrive has not downloaded it to this computer yet. Make sure OneDrive is
+                  running, open the file once from File Explorer (or set the folder to Always keep on this device), then click
+                  Find again.
+                </p>
+              )}
               {status.kind === 'no_access' && <p className="text-warning">The browser did not allow reading the folder. Try again, or choose the file yourself.</p>}
               <div className="flex flex-wrap gap-2">
                 {folderSupported && (
                   <Button type="button" variant="outline" size="sm" onClick={onFind} disabled={busy}>
                     <FolderOpen aria-hidden />
                     {folder ? 'Find in my OneDrive folder' : 'Connect my OneDrive folder'}
+                  </Button>
+                )}
+                {folderSupported && folder && (status.kind === 'not_found' || status.kind === 'unreadable') && (
+                  <Button type="button" variant="outline" size="sm" onClick={onChangeFolder} disabled={busy}>
+                    <FolderOpen aria-hidden />
+                    Use another folder
                   </Button>
                 )}
                 <Button type="button" variant="outline" size="sm" onClick={() => pickerRef.current?.click()} disabled={busy}>

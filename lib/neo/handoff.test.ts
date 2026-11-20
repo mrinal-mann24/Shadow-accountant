@@ -6,6 +6,7 @@ import {
   displayPath,
   findLocalFile,
   istDay,
+  isUnreadable,
   MAX_HANDOFF_BYTES,
   neoErrorMessage,
   neoHandoffUrl,
@@ -167,6 +168,35 @@ describe('findLocalFile', () => {
     expect(unsure).toMatchObject({ sizeMatches: false })
     expect(await findLocalFile(tree({}), f)).toBeNull()
     expect(await findLocalFile(tree({ 'Client Files/KRRD/2026-11-19/inv.pdf': 10 }), { ...f, fileName: null })).toBeNull()
+  })
+
+  it('finds the library inside a higher folder (the whole OneDrive folder)', async () => {
+    const files = { 'VA Documents - Documents/Client Files/KRRD/2026-11-19/inv.pdf': 10, 'Desktop/x.txt': 1 }
+    const root = tree(files)
+    const withEntries: FolderHandle = {
+      ...root,
+      async *values() {
+        yield { kind: 'directory', name: 'Desktop' }
+        yield { kind: 'directory', name: 'VA Documents - Documents' }
+      },
+    }
+    expect(await findLocalFile(withEntries, f)).toMatchObject({ path: 'VA Documents - Documents / Client Files / KRRD / 2026-11-19 / inv.pdf', sizeMatches: true })
+  })
+
+  it('reports a file that is there but cannot be read (online-only, OneDrive stopped)', async () => {
+    const root = tree({ 'Client Files/KRRD/2026-11-19/inv.pdf': 10 })
+    const wrap = (d: FolderHandle): FolderHandle => ({
+      async getDirectoryHandle(n) {
+        return wrap(await d.getDirectoryHandle(n))
+      },
+      async getFileHandle(n) {
+        await d.getFileHandle(n)
+        return { getFile: async () => Promise.reject(new DOMException('cloud file provider not running', 'NotReadableError')) }
+      },
+    })
+    const r = await findLocalFile(wrap(root), f)
+    expect(isUnreadable(r)).toBe(true)
+    expect(r).toEqual({ unreadable: 'Client Files / KRRD / 2026-11-19 / inv.pdf' })
   })
 
   it('without a known size, the first file found is used and marked unknown', async () => {

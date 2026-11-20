@@ -163,23 +163,32 @@ export function displayPath(f: { folderName: string; uploadedAt: string | null; 
 
 /** A read-only view of a folder, as the File System Access API gives it (and as tests fake it). */
 export type FolderHandle = {
+  name?: string
+  kind?: string
   getDirectoryHandle(name: string): Promise<FolderHandle>
   getFileHandle(name: string): Promise<{ getFile(): Promise<File> }>
+  /** Child entries (Chromium FileSystemDirectoryHandle); used to find the synced library inside a higher folder. */
+  values?(): AsyncIterable<{ kind: string; name: string }>
 }
 
 export type FoundFile = { file: File; path: string; sizeMatches: boolean | null }
+/** The file is there but could not be read: usually online-only with OneDrive stopped or not downloaded yet. */
+export type UnreadableFile = { unreadable: string }
+export type FindResult = FoundFile | UnreadableFile | null
 
-/**
- * Finds the file under the connected folder. When the logged size is known, a file whose size differs is skipped
- * (it is another file with the same name) and the "_1", "_2" names are tried. Returns null when nothing fits.
- */
-export async function findLocalFile(
+export const isUnreadable = (r: FindResult): r is UnreadableFile => !!r && 'unreadable' in r
+
+/** How the synced SharePoint library folder starts ("VA Documents - Documents"). */
+const LIBRARY_PREFIX = 'va documents'
+
+async function findUnder(
   root: FolderHandle,
-  f: { folderName: string; uploadedAt: string | null; parentFolder?: string | null; fileName: string | null; fileSize: number | null },
-): Promise<FoundFile | null> {
-  if (!f.fileName) return null
+  prefix: string[],
+  f: { folderName: string; uploadedAt: string | null; parentFolder?: string | null; fileName: string; fileSize: number | null },
+): Promise<FindResult> {
   const knownSize = typeof f.fileSize === 'number' && f.fileSize > 0 ? f.fileSize : null
   let unsure: FoundFile | null = null
+  let unreadable: UnreadableFile | null = null
   for (const folder of candidateFolders(f)) {
     let dir: FolderHandle = root
     try {
@@ -188,17 +197,53 @@ export async function findLocalFile(
       continue // this folder does not exist here
     }
     for (const name of candidateNames(f.fileName)) {
+      let handle: { getFile(): Promise<File> }
+      try {
+        handle = await dir.getFileHandle(name)
+      } catch {
+        continue // no file with this name
+      }
+      const path = [...prefix, ...folder, name].join(' / ')
       let file: File
       try {
-        file = await (await dir.getFileHandle(name)).getFile()
+        file = await handle.getFile()
       } catch {
+        unreadable ??= { unreadable: path } // there, but OneDrive could not hand it over
         continue
       }
-      const path = [...folder, name].join(' / ')
       if (knownSize === null) return { file, path, sizeMatches: null }
       if (file.size === knownSize) return { file, path, sizeMatches: true }
       unsure ??= { file, path, sizeMatches: false }
     }
   }
-  return unsure
+  return unsure ?? unreadable
+}
+
+/**
+ * Finds the file under the connected folder. When the logged size is known, a file whose size differs is skipped
+ * (it is another file with the same name) and the "_1", "_2" names are tried. Works when the connected folder is
+ * "Client Files", the library folder above it, or a higher folder that holds the library ("VA Documents - ...").
+ * Returns null when nothing is there, or { unreadable } when the file is there but could not be read.
+ */
+export async function findLocalFile(
+  root: FolderHandle,
+  f: { folderName: string; uploadedAt: string | null; parentFolder?: string | null; fileName: string | null; fileSize: number | null },
+): Promise<FindResult> {
+  if (!f.fileName) return null
+  const file = { ...f, fileName: f.fileName }
+  const direct = await findUnder(root, [], file)
+  if (direct && !isUnreadable(direct)) return direct
+  // A higher folder (for example the whole OneDrive folder): look inside the synced library folder(s).
+  if (root.values) {
+    try {
+      for await (const entry of root.values()) {
+        if (entry.kind !== 'directory' || !entry.name.toLowerCase().startsWith(LIBRARY_PREFIX)) continue
+        const hit = await findUnder(await root.getDirectoryHandle(entry.name), [entry.name], file)
+        if (hit && !isUnreadable(hit)) return hit
+      }
+    } catch {
+      // cannot list this folder: keep what was found
+    }
+  }
+  return direct
 }
