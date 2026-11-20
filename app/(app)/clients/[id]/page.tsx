@@ -39,9 +39,18 @@ async function loadFollowUps(user: AppUser, clientId: string): Promise<FollowUpV
   }
 }
 
-export default async function ClientPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ClientPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
   const user = await requireUser()
   const { id } = await params
+  // ?file=<upload id> from a Teams "View" link: list and highlight that file.
+  const focusFile = (await searchParams).file
+  const focusFileId = typeof focusFile === 'string' && focusFile.length <= 100 ? focusFile : null
   const client = await getClient(user, id)
   if (!client) notFound()
 
@@ -170,6 +179,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
               <FilesGrid
                 documents={documents}
                 now={now}
+                focusId={focusFileId}
                 neo={{ clientId: client.id, clientName: client.name, companyName: client.legalName?.trim() || client.name, parentFolder }}
               />
             </Section>

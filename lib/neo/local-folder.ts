@@ -1,5 +1,5 @@
 // The accountant's OneDrive-synced client files folder, connected once in this browser (File System Access API,
-// Chrome and Edge on a computer). The folder handle is kept in this browser's IndexedDB so the next "Open in NEO"
+// Chrome and Edge on a computer). The folder handle is kept in this browser's IndexedDB so the next View or "Push to NEO"
 // finds files on its own; it never leaves the laptop. Browser only: used by components/accountant/open-in-neo.tsx.
 import type { FolderHandle } from './handoff'
 

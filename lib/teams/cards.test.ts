@@ -200,7 +200,7 @@ describe('escalationCard', () => {
 
 describe('filesCard', () => {
   it('lists up to 10 files with + n more and only an Open client link', () => {
-    const files = Array.from({ length: 13 }, (_, i) => ({ name: `invoice-${i + 1}.pdf`, at: '2026-11-18T10:15:00Z' }))
+    const files = Array.from({ length: 13 }, (_, i) => ({ id: `u-${i + 1}`, name: `invoice-${i + 1}.pdf`, at: '2026-11-18T10:15:00Z' }))
     const c = filesCard({ clientId: 'c-9', clientName: 'Acme Traders', files, siteUrl: SITE })
     const s = json(c)
     expect(s).toContain('13 new files from Acme Traders')
@@ -213,8 +213,17 @@ describe('filesCard', () => {
     ])
   })
 
+  it('gives each shown file a View button that opens Shadow on that file', () => {
+    const files = Array.from({ length: 12 }, (_, i) => ({ id: `u ${i + 1}`, name: `f-${i + 1}.pdf`, at: '' }))
+    const s = JSON.stringify(filesCard({ clientId: 'c-9', clientName: 'Acme', files, siteUrl: SITE }).body)
+    const views = [...s.matchAll(/"title":"View","url":"([^"]+)"/g)].map((m) => m[1])
+    expect(views).toHaveLength(10)
+    expect(views[0]).toBe('https://shadow.example.com/clients/c-9?file=u%201#file-u%201')
+    expect(s).not.toContain('file=u%2011')
+  })
+
   it('uses the singular for one file', () => {
-    const c = filesCard({ clientId: 'c-9', clientName: 'Acme', files: [{ name: 'a.pdf', at: '' }], siteUrl: SITE })
+    const c = filesCard({ clientId: 'c-9', clientName: 'Acme', files: [{ id: 'u-1', name: 'a.pdf', at: '' }], siteUrl: SITE })
     expect(json(c)).toContain('1 new file from Acme')
     expect(json(c)).not.toContain('more')
   })
@@ -257,7 +266,7 @@ describe('plainText (client text never becomes a link or an image)', () => {
       reminderCard(evil, { siteUrl: SITE, waitingMinutes: 60, ref: 'r' }),
       escalationCard(evil, { siteUrl: SITE, waitingMinutes: 120, ref: 'e', accountants: [] }),
       ticketCard(evil, { siteUrl: SITE, handled: { action: 'closed', by: 'A', at: '', note: '[n](https://evil.test/n)' } }),
-      filesCard({ clientId: 'c-9', clientName: evil.clientName, siteUrl: SITE, files: [{ name: '[f](https://evil.test/f)', at: '' }] }),
+      filesCard({ clientId: 'c-9', clientName: evil.clientName, siteUrl: SITE, files: [{ id: 'u-1', name: '[f](https://evil.test/f)', at: '' }] }),
     ]
     for (const c of cards) {
       const body = JSON.stringify(c.body)
@@ -266,7 +275,8 @@ describe('plainText (client text never becomes a link or an image)', () => {
       expect(body).not.toContain('evil.test/t.png')
       expect(body).not.toContain('evil.test/n')
       expect(body).not.toContain('evil.test/f')
-      expect(body).not.toContain('https://')
+      // The only links in a card body are Shadow's own (the per-file View buttons).
+      expect(body.replaceAll(SITE.replace(/\/$/, ''), '')).not.toContain('https://')
     }
     const texts = textsOf(cards[0])
     expect(texts).toContain('Title')

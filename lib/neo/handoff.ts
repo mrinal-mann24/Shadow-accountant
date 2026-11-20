@@ -1,4 +1,4 @@
-// "Open in NEO": hands a client file from the Shadow web page to NEO running on the same laptop.
+// "Push to NEO": hands a client file from the Shadow web page to NEO running on the same laptop.
 // Pure and browser-safe (no server imports), so it is unit tested.
 //
 // Why the browser: NEO listens only on the laptop (127.0.0.1). Shadow's server (Vercel) and the Teams bot cannot
@@ -177,6 +177,11 @@ export type UnreadableFile = { unreadable: string }
 export type FindResult = FoundFile | UnreadableFile | null
 
 export const isUnreadable = (r: FindResult): r is UnreadableFile => !!r && 'unreadable' in r
+
+/** Types "View" opens in a browser tab. Others (Excel, Word, zip) download so the laptop's own app opens them.
+ *  SVG and HTML are left out on purpose: a client-sent file opened from a Shadow tab must not run scripts. */
+const BROWSER_VIEW_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp', 'text/plain'])
+export const opensInBrowser = (type: string): boolean => BROWSER_VIEW_TYPES.has(type.toLowerCase())
 
 /** How the synced SharePoint library folder starts ("VA Documents - Documents"). */
 const LIBRARY_PREFIX = 'va documents'

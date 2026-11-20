@@ -241,20 +241,42 @@ export function escalationCard(
   )
 }
 
-/** New files from a client. Links only, no Execute buttons. */
+/** Opens the client page on one file, highlighted, with its View and Push to NEO buttons (they run in the browser on
+ *  this laptop, so the card cannot open the file itself). `file` makes the page list it even when newer files push it
+ *  out of the latest 10. */
+export function fileUrl(siteUrl: string, clientId: string, uploadId: string): string {
+  const id = encodeURIComponent(uploadId)
+  return `${clientUrl(siteUrl, clientId)}?file=${id}#file-${id}`
+}
+
+/** One file per row: name and time, and a View button that opens Shadow on that file. */
+function fileRow(f: { name: string; at: string; url: string }) {
+  return {
+    type: 'ColumnSet',
+    separator: true,
+    columns: [
+      {
+        type: 'Column',
+        width: 'stretch',
+        verticalContentAlignment: 'Center',
+        items: [text(safe(f.name, 120) || 'Unnamed file'), text(formatIst(f.at) || ' ', { isSubtle: true, spacing: 'None', size: 'Small' })],
+      },
+      { type: 'Column', width: 'auto', verticalContentAlignment: 'Center', items: [{ type: 'ActionSet', actions: [openUrl('View', f.url)] }] },
+    ],
+  }
+}
+
+/** New files from a client. Links only, no Execute buttons: a View link per file, and one for all of them. */
 export function filesCard(o: {
   clientId: string
   clientName: string
-  files: { name: string; at: string }[]
+  files: { id: string; name: string; at: string }[]
   siteUrl: string
 }): AdaptiveCard {
   const n = o.files.length
   const body: unknown[] = [heading(`${n} new ${n === 1 ? 'file' : 'files'} from ${safe(o.clientName, 120)}`)]
-  const shown = o.files.slice(0, MAX_FILES)
-  if (shown.length)
-    body.push(facts(shown.map((f) => [safe(f.name, 120) || 'Unnamed file', formatIst(f.at) || ' '] as [string, string])))
+  for (const f of o.files.slice(0, MAX_FILES)) body.push(fileRow({ ...f, url: fileUrl(o.siteUrl, o.clientId, f.id) }))
   if (n > MAX_FILES) body.push(text(`+ ${n - MAX_FILES} more`, { isSubtle: true }))
-  // Opens the client's files in Shadow, where each file has "Open in NEO" (it runs in the browser on this laptop).
   return card(body, [openUrl('Open files in Shadow', `${clientUrl(o.siteUrl, o.clientId)}#files`)])
 }
 

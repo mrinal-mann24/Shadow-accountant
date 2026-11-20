@@ -1,9 +1,10 @@
 'use client'
-// "Open in NEO" for one client file: finds the file in the accountant's OneDrive-synced folder on this laptop (or
-// lets them choose it), shows it, and hands it to NEO running on this laptop (lib/neo/handoff.ts). Nothing is sent
-// to Shadow's server: the file goes from this browser straight to NEO on 127.0.0.1.
+// "Push to NEO" for one client file: finds the file in the accountant's OneDrive-synced folder on this laptop (or
+// lets them choose it), asks for the Tally company and hands it to NEO running on this laptop (lib/neo/handoff.ts).
+// Viewing the file is the separate View button. Nothing is sent to Shadow's server: the file goes from this browser
+// straight to NEO on 127.0.0.1.
 import { useEffect, useId, useRef, useState } from 'react'
-import { CheckCircle2, ExternalLink, FolderOpen, Loader2, Send, TriangleAlert, Upload } from 'lucide-react'
+import { CheckCircle2, FolderOpen, Loader2, Send, TriangleAlert, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -49,9 +50,6 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-const isImage = (f: File) => f.type.startsWith('image/')
-const isPdf = (f: File) => f.type === 'application/pdf'
-
 type Status =
   | { kind: 'idle' }
   | { kind: 'searching' }
@@ -66,7 +64,6 @@ export function OpenInNeo({ file }: { file: NeoFile }) {
   const [open, setOpen] = useState(false)
   const [folder, setFolder] = useState<BrowserFolder | null>(null)
   const [found, setFound] = useState<FoundFile | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [checked, setChecked] = useState(false)
   const [company, setCompany] = useState(file.companyName)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
@@ -74,27 +71,17 @@ export function OpenInNeo({ file }: { file: NeoFile }) {
   /** Where the last search looked and why each place failed (shown when the file is not found). */
   const [checks, setChecks] = useState<string[]>([])
   const pickerRef = useRef<HTMLInputElement>(null)
-  const urlRef = useRef<string | null>(null)
   // Bumped when the dialog closes or a new search starts, so a slow search never fills a closed or newer dialog.
   const runRef = useRef(0)
   const companyId = useId()
   const confirmId = useId()
   const hint = displayPath(file)
 
-  /** Shows a file (or none), with a preview link for PDFs and images; the previous link is released. */
+  /** Sets the file to send (or none). Viewing it is the separate View button (components/accountant/view-file.tsx). */
   function show(next: FoundFile | null) {
-    if (urlRef.current) URL.revokeObjectURL(urlRef.current)
-    const url = next && (isImage(next.file) || isPdf(next.file)) ? URL.createObjectURL(next.file) : null
-    urlRef.current = url
-    setPreviewUrl(url)
     setFound(next)
     setChecked(false)
   }
-
-  // Release the preview link when the component goes away.
-  useEffect(() => () => {
-    if (urlRef.current) URL.revokeObjectURL(urlRef.current)
-  }, [])
 
   // Opening the dialog: load the remembered folder; search when access is already granted (asking again needs a
   // click, so that waits for the Find button).
@@ -201,12 +188,12 @@ export function OpenInNeo({ file }: { file: NeoFile }) {
       <DialogTrigger asChild>
         <Button variant="outline" size="xs">
           <Send aria-hidden />
-          Open in NEO
+          Push to NEO
         </Button>
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Open in NEO</DialogTitle>
+          <DialogTitle>Push to NEO</DialogTitle>
           <DialogDescription>
             Sends this file to NEO on this computer. NEO and Tally must be open here. Nothing is posted to Tally until you
             click Push to Tally in NEO.
@@ -239,16 +226,6 @@ export function OpenInNeo({ file }: { file: NeoFile }) {
                     I have checked this is the right file
                   </label>
                 </div>
-              )}
-              {previewUrl && isImage(found.file) && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={previewUrl} alt={`Preview of ${found.file.name}`} className="max-h-80 w-auto self-start rounded-md border object-contain" />
-              )}
-              {previewUrl && isPdf(found.file) && (
-                <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm underline">
-                  <ExternalLink className="size-3.5" aria-hidden />
-                  Open the PDF to check it
-                </a>
               )}
             </div>
           ) : status.kind === 'searching' ? (
@@ -348,7 +325,7 @@ export function OpenInNeo({ file }: { file: NeoFile }) {
           )}
           <Button type="button" onClick={onSend} disabled={!canSend}>
             {status.kind === 'sending' ? <Loader2 className="animate-spin" aria-hidden /> : <Send aria-hidden />}
-            {sent ? 'Sent' : 'Send to NEO'}
+            {sent ? 'Sent' : 'Push to NEO'}
           </Button>
         </DialogFooter>
       </DialogContent>

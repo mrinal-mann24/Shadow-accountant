@@ -1,9 +1,11 @@
-// "Files received" monthly checklist (AR / AP / Bank / Other) from document_uploads, and the latest files with an
-// "Open in NEO" button each (components/accountant/open-in-neo.tsx) when the page passes `neo`.
+// "Files received" monthly checklist (AR / AP / Bank / Other) from document_uploads, and the latest files with
+// "View" (components/accountant/view-file.tsx) and "Push to NEO" (components/accountant/open-in-neo.tsx) buttons each
+// when the page passes `neo`.
 import { Check } from 'lucide-react'
 import type { DocumentItem } from '@/lib/data/types'
 import { buildFilesGrid, FILE_CATEGORY_LABELS, formatDateTime } from './logic'
-import { OpenInNeo } from './open-in-neo'
+import { OpenInNeo, type NeoFile } from './open-in-neo'
+import { ViewFile } from './view-file'
 import { EmptyState } from './ui'
 
 /** Latest files listed under the grid. */
@@ -11,10 +13,52 @@ export const RECENT_FILES = 10
 
 export type FilesNeoContext = { clientId: string; clientName: string; companyName: string; parentFolder: string | null }
 
-export function FilesGrid({ documents, now, neo }: { documents: DocumentItem[]; now: Date; neo?: FilesNeoContext }) {
+function neoFile(neo: FilesNeoContext, d: DocumentItem): NeoFile {
+  return {
+    id: d.id,
+    clientId: neo.clientId,
+    clientName: neo.clientName,
+    fileName: d.fileName,
+    folderName: d.folderName,
+    parentFolder: neo.parentFolder,
+    uploadedAt: d.uploadedAt,
+    fileSize: d.fileSize,
+    companyName: neo.companyName,
+  }
+}
+
+/** View first (check the file), then Push to NEO. */
+function FileActions({ file }: { file: NeoFile }) {
+  return (
+    <span className="flex items-start gap-2">
+      <ViewFile file={file} />
+      <OpenInNeo file={file} />
+    </span>
+  )
+}
+
+/** The latest files, plus the focused one (from a Teams View link) when newer files pushed it out. */
+export function recentFiles(documents: DocumentItem[], focusId?: string | null): DocumentItem[] {
+  const recent = documents.filter((d) => d.uploadedAt).slice(0, RECENT_FILES)
+  const focused = focusId ? documents.find((d) => d.id === focusId) : undefined
+  return focused && !recent.includes(focused) ? [...recent, focused] : recent
+}
+
+export function FilesGrid({
+  documents,
+  now,
+  neo,
+  focusId,
+}: {
+  documents: DocumentItem[]
+  now: Date
+  neo?: FilesNeoContext
+  /** Upload id to highlight (from a Teams View link). */
+  focusId?: string | null
+}) {
   if (documents.length === 0) return <EmptyState>No files received yet.</EmptyState>
   const grid = buildFilesGrid(documents, now, 6)
-  const recent = documents.filter((d) => d.uploadedAt).slice(0, RECENT_FILES)
+  const recent = recentFiles(documents, focusId)
 
   return (
     <div className="flex flex-col gap-4">
@@ -67,25 +111,18 @@ export function FilesGrid({ documents, now, neo }: { documents: DocumentItem[]; 
           <p className="mb-1 text-xs text-muted-foreground">Latest files</p>
           <ul className="space-y-1 text-sm">
             {recent.map((d) => (
-              <li key={d.id} id={`file-${d.id}`} className="flex scroll-mt-20 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <li
+                key={d.id}
+                id={`file-${d.id}`}
+                aria-current={d.id === focusId ? 'true' : undefined}
+                className={`flex scroll-mt-20 flex-wrap items-center justify-between gap-x-3 gap-y-1 ${
+                  d.id === focusId ? '-mx-2 rounded-md bg-primary/10 px-2 py-1 ring-1 ring-primary/40' : ''
+                }`}
+              >
                 <span className="min-w-0 flex-1 break-all">{d.fileName ?? d.path}</span>
                 <span className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground">{formatDateTime(d.uploadedAt)}</span>
-                  {neo && d.fileName && (
-                    <OpenInNeo
-                      file={{
-                        id: d.id,
-                        clientId: neo.clientId,
-                        clientName: neo.clientName,
-                        fileName: d.fileName,
-                        folderName: d.folderName,
-                        parentFolder: neo.parentFolder,
-                        uploadedAt: d.uploadedAt,
-                        fileSize: d.fileSize,
-                        companyName: neo.companyName,
-                      }}
-                    />
-                  )}
+                  {neo && d.fileName && <FileActions file={neoFile(neo, d)} />}
                 </span>
               </li>
             ))}

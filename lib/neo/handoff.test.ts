@@ -10,6 +10,7 @@ import {
   MAX_HANDOFF_BYTES,
   neoErrorMessage,
   neoHandoffUrl,
+  opensInBrowser,
   safeFolderName,
   sendToNeo,
   type FolderHandle,
@@ -216,5 +217,18 @@ describe('findLocalFile', () => {
   it('without a known size, the first file found is used and marked unknown', async () => {
     const hit = await findLocalFile(tree({ 'Client Files/KRRD/2026-11-19/inv.pdf': 5 }), { ...f, fileSize: 0 })
     expect(hit).toMatchObject({ sizeMatches: null })
+  })
+})
+
+describe('opensInBrowser', () => {
+  it('opens PDFs, common images and plain text in a tab', () => {
+    for (const t of ['application/pdf', 'image/png', 'image/JPEG', 'text/plain']) expect(opensInBrowser(t)).toBe(true)
+  })
+  it('downloads Office files, zips and unknown types', () => {
+    const office = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    for (const t of [office, 'application/zip', '']) expect(opensInBrowser(t)).toBe(false)
+  })
+  it('never opens types that can run scripts from a Shadow tab', () => {
+    for (const t of ['image/svg+xml', 'text/html', 'application/xhtml+xml']) expect(opensInBrowser(t)).toBe(false)
   })
 })

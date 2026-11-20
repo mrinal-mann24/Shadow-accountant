@@ -289,7 +289,7 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
           siteUrl: site,
           files: files
             .filter((f) => claimed.includes(f.uploadId))
-            .map((f) => ({ name: f.fileName ?? 'Unnamed file', at: f.uploadedAt })),
+            .map((f) => ({ id: f.uploadId, name: f.fileName ?? 'Unnamed file', at: f.uploadedAt })),
         }),
     })
   }
