@@ -2,7 +2,7 @@
 // client (temporary rule until RLS policies are approved; see docs/agents/CONTRACTS.md).
 import 'server-only'
 
-export { listClients, getClient, listVas, assignClient, setCouncilEnabled } from './clients'
+export { listClients, getClient, listVas, assignClient, setCouncilEnabled, parentFolderName } from './clients'
 export { listMessages } from './messages'
 export { listConversations, updateConversation, ticketForUser, reassignTicket } from './conversations'
 export { getClientScores, getScoreHistory } from './scores'

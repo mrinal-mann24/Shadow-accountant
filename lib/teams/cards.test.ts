@@ -209,7 +209,7 @@ describe('filesCard', () => {
     expect(s).toContain('+ 3 more')
     expect(executes(c)).toHaveLength(0)
     expect(openUrls(c)).toEqual([
-      { type: 'Action.OpenUrl', title: 'Open client', url: 'https://shadow.example.com/clients/c-9' },
+      { type: 'Action.OpenUrl', title: 'Open files in Shadow', url: 'https://shadow.example.com/clients/c-9#files' },
     ])
   })
 

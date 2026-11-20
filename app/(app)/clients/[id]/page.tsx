@@ -13,7 +13,7 @@ import { EmptyState, HealthValue, PageHeader, ScoreTrend, Section } from '@/comp
 import { requireUser } from '@/lib/auth/session'
 import type { AppUser } from '@/lib/auth/types'
 import { getClientBucket } from '@/lib/buckets'
-import { getClient, getScoreHistory, getTimeline, listConversations, listDocuments, listFollowUps, listMeetings } from '@/lib/data'
+import { getClient, getScoreHistory, getTimeline, listConversations, listDocuments, listFollowUps, listMeetings, parentFolderName } from '@/lib/data'
 import type { FollowUpView } from '@/lib/followups/types'
 import { followUpFormAction } from './follow-up-actions'
 
@@ -44,7 +44,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const client = await getClient(user, id)
   if (!client) notFound()
 
-  const [history, tickets, documents, meetings, timeline, bucket, followUps] = await Promise.all([
+  const [history, tickets, documents, meetings, timeline, bucket, followUps, parent] = await Promise.all([
     getScoreHistory(user, id, 30),
     listConversations(user, { clientId: id }),
     listDocuments(user, id, { clientOnly: true }),
@@ -52,7 +52,10 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     getTimeline(user, id, { limit: 100, clientOnly: true }),
     getClientBucket(id),
     loadFollowUps(user, id),
+    // A sub-group's files sit inside its parent's folder; only the folder name is read, whoever the parent's accountant is.
+    client.parentClientId ? parentFolderName(user, client.id).catch(() => null) : Promise.resolve(null),
   ])
+  const parentFolder = parent
   const now = new Date()
   const openTickets = tickets.filter((t) => t.status === 'open')
   const closedTickets = tickets.filter((t) => t.status !== 'open')
@@ -160,9 +163,15 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             </Section>
           )}
 
-          <Section title="Files received">
-            <FilesGrid documents={documents} now={now} />
-          </Section>
+          <div id="files" className="scroll-mt-20">
+            <Section title="Files received">
+              <FilesGrid
+                documents={documents}
+                now={now}
+                neo={{ clientId: client.id, clientName: client.name, companyName: client.legalName?.trim() || client.name, parentFolder }}
+              />
+            </Section>
+          </div>
 
           <Section title="Timeline">
             <ActivityFeed items={timeline} now={now} showClient={false} anchors emptyText="No messages, files, meetings or tickets yet." />

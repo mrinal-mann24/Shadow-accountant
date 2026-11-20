@@ -1,13 +1,20 @@
-// "Files received" monthly checklist (AR / AP / Bank / Other) from document_uploads.
+// "Files received" monthly checklist (AR / AP / Bank / Other) from document_uploads, and the latest files with an
+// "Open in NEO" button each (components/accountant/open-in-neo.tsx) when the page passes `neo`.
 import { Check } from 'lucide-react'
 import type { DocumentItem } from '@/lib/data/types'
 import { buildFilesGrid, FILE_CATEGORY_LABELS, formatDateTime } from './logic'
+import { OpenInNeo } from './open-in-neo'
 import { EmptyState } from './ui'
 
-export function FilesGrid({ documents, now }: { documents: DocumentItem[]; now: Date }) {
+/** Latest files listed under the grid. */
+export const RECENT_FILES = 10
+
+export type FilesNeoContext = { clientId: string; clientName: string; companyName: string; parentFolder: string | null }
+
+export function FilesGrid({ documents, now, neo }: { documents: DocumentItem[]; now: Date; neo?: FilesNeoContext }) {
   if (documents.length === 0) return <EmptyState>No files received yet.</EmptyState>
   const grid = buildFilesGrid(documents, now, 6)
-  const recent = documents.filter((d) => d.uploadedAt).slice(0, 5)
+  const recent = documents.filter((d) => d.uploadedAt).slice(0, RECENT_FILES)
 
   return (
     <div className="flex flex-col gap-4">
@@ -60,9 +67,26 @@ export function FilesGrid({ documents, now }: { documents: DocumentItem[]; now: 
           <p className="mb-1 text-xs text-muted-foreground">Latest files</p>
           <ul className="space-y-1 text-sm">
             {recent.map((d) => (
-              <li key={d.id} className="flex flex-wrap justify-between gap-x-3">
-                <span className="min-w-0 break-all">{d.fileName ?? d.path}</span>
-                <span className="text-xs text-muted-foreground">{formatDateTime(d.uploadedAt)}</span>
+              <li key={d.id} id={`file-${d.id}`} className="flex scroll-mt-20 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <span className="min-w-0 flex-1 break-all">{d.fileName ?? d.path}</span>
+                <span className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">{formatDateTime(d.uploadedAt)}</span>
+                  {neo && d.fileName && (
+                    <OpenInNeo
+                      file={{
+                        id: d.id,
+                        clientId: neo.clientId,
+                        clientName: neo.clientName,
+                        fileName: d.fileName,
+                        folderName: d.folderName,
+                        parentFolder: neo.parentFolder,
+                        uploadedAt: d.uploadedAt,
+                        fileSize: d.fileSize,
+                        companyName: neo.companyName,
+                      }}
+                    />
+                  )}
+                </span>
               </li>
             ))}
           </ul>

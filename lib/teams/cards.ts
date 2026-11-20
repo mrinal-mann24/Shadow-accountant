@@ -254,7 +254,8 @@ export function filesCard(o: {
   if (shown.length)
     body.push(facts(shown.map((f) => [safe(f.name, 120) || 'Unnamed file', formatIst(f.at) || ' '] as [string, string])))
   if (n > MAX_FILES) body.push(text(`+ ${n - MAX_FILES} more`, { isSubtle: true }))
-  return card(body, [openUrl('Open client', clientUrl(o.siteUrl, o.clientId))])
+  // Opens the client's files in Shadow, where each file has "Open in NEO" (it runs in the browser on this laptop).
+  return card(body, [openUrl('Open files in Shadow', `${clientUrl(o.siteUrl, o.clientId)}#files`)])
 }
 
 /** What the bot does and the commands it understands. */

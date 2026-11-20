@@ -4,7 +4,7 @@ import { createAdminSupabase } from '@/lib/supabase/admin'
 import type { Row } from '@/lib/db/types'
 import { chunk, fetchAll } from './paginate'
 import { isActiveClient, matchesStatusFilter, type ClientStatusFilter } from './client-status'
-import { assertCanMutate, isInvalidInput, scopeOf, type Db } from './scope'
+import { assertCanMutate, canAccessClient, isInvalidInput, scopeOf, type Db } from './scope'
 import type { ClientDetail, ClientListItem, ContactItem, VaItem } from './types'
 
 const CLIENT_COLS =
@@ -196,6 +196,24 @@ export async function listClients(
     (r) => matchesStatusFilter(r.status, statusFilter) && (!f.search || matchesSearch(r, f.search)),
   )
   return enrich(db, filtered)
+}
+
+/**
+ * The folder a sub-group client's files sit under in SharePoint (va-bot: the parent's WhatsApp group name, else its
+ * client name), or null when the client has no parent. Only for a client the user may see. Returns just that name,
+ * also when the parent belongs to another accountant: the file path needs it, and nothing else of the parent is read.
+ */
+export async function parentFolderName(user: AppUser, clientId: string): Promise<string | null> {
+  const db = createAdminSupabase()
+  if (!(await canAccessClient(db, user, clientId))) return null
+  const child = await db.from('clients').select('parent_client_id').eq('client_id', clientId).maybeSingle()
+  if (child.error) throw new Error(`parentFolderName: ${child.error.message}`)
+  const parentId = child.data?.parent_client_id
+  if (!parentId) return null
+  const parent = await db.from('clients').select('client_name, whatsapp_group_name').eq('client_id', parentId).maybeSingle()
+  if (parent.error) throw new Error(`parentFolderName: parent: ${parent.error.message}`)
+  if (!parent.data) return null
+  return parent.data.whatsapp_group_name?.trim() || parent.data.client_name
 }
 
 /** One client with profile, score, contacts and accountant name; null when missing or out of scope. */
