@@ -15,6 +15,7 @@ import {
   plainText,
   reminderCard,
   ticketCard,
+  closeTicketCard,
 } from './cards'
 import { followUpRef, type FollowUpView } from '@/lib/followups/types'
 import type { AdaptiveCard, TicketForCard } from './types'
@@ -119,6 +120,29 @@ describe('ticketCard', () => {
     expect(openUrls(h).map((a) => a.url)).toEqual([TICKET_LINK])
     const s = json(h)
     expect(s).toContain('Closed by Harshit Jain, 18 Nov, 3:45 pm')
+    expect(s).not.toContain('abc123')
+    expect(s).toContain('Ticket: Acme Traders')
+    expect(s).not.toContain('New ticket')
+  })
+})
+
+describe('closeTicketCard', () => {
+  const c = closeTicketCard(ticket, { siteUrl: SITE })
+
+  it('asks to confirm, shows the ticket, and has only Close plus the Open in Shadow link', () => {
+    const s = json(c)
+    expect(s).toContain('Close this ticket? Acme Traders')
+    expect(s).toContain('Nothing changes until you press Close.')
+    expect(s).toContain('Harshit Jain')
+    const ex = executes(c)
+    expect(ex.map((a) => a.title)).toEqual(['Close'])
+    expect(ex.map((a) => a.data)).toEqual([{ action: 'close', ticketId: 't-1', kind: 'ticket', ref: 't-1' }])
+    expect(ex[0].verb).toBe('ticket')
+    expect(openUrls(c)).toEqual([{ type: 'Action.OpenUrl', title: 'Open in Shadow', url: TICKET_LINK }])
+  })
+
+  it('masks credentials in the ticket text', () => {
+    const s = json(closeTicketCard({ ...ticket, summary: 'password: abc123' }, { siteUrl: SITE }))
     expect(s).not.toContain('abc123')
   })
 })

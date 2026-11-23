@@ -163,4 +163,4 @@ export type AskShadow = (
   user: AppUser,
   question: string,
   o?: { history?: ChatTurn[]; teams?: boolean },
-) => Promise<{ text: string; citations: { n: number; label: string; link?: string }[]; save?: SaveProposal }>
+) => Promise<{ text: string; citations: { n: number; label: string; link?: string }[]; save?: SaveProposal; closes?: string[] }>

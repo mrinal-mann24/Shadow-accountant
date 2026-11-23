@@ -6,6 +6,7 @@ import { ForbiddenError, ViewAsReadOnlyError } from '@/lib/auth/roles'
 import type { FollowUpAction, FollowUpCardData, FollowUpView } from '@/lib/followups/types'
 import {
   cardAttachment,
+  closeTicketCard,
   escalationCard,
   followUpCard,
   followUpRefParts,
@@ -703,11 +704,21 @@ async function handleMessage(activity: Activity, deps: BotDeps): Promise<BotRepl
 
     let out: string
     let answerText = ''
-    let card: AdaptiveCard | null = null
+    const cards: AdaptiveCard[] = []
     try {
       const r = await deps.ask(user, message, { history: historyTurns(history), teams: true })
       answerText = r.text
       out = formatAnswer(deps.siteUrl, r)
+      for (const ticketId of r.closes ?? []) {
+        try {
+          const c = await closeCardFor(deps, user, ticketId)
+          if (typeof c === 'string') out += `\n\n${c}`
+          else cards.push(c)
+        } catch (e) {
+          console.error('[teams-bot] close card failed:', errorMessage(e))
+          out += `\n\n${FAILED}`
+        }
+      }
       if (r.save) {
         const content = textToSave(r.save, message, history)
         if (!content) {
@@ -716,7 +727,7 @@ async function handleMessage(activity: Activity, deps: BotDeps): Promise<BotRepl
           const meta = { clientId: r.save.clientId, clientName: r.save.clientName, title: r.save.title, meetingDate: r.save.meetingDate }
           try {
             const pendingId = await deps.chat.addPending(email, content, meta)
-            card = saveCard({ pendingId, ...meta, content }, { siteUrl: deps.siteUrl })
+            cards.push(saveCard({ pendingId, ...meta, content }, { siteUrl: deps.siteUrl }))
           } catch (e) {
             console.error('[teams-bot] pending save failed:', errorMessage(e))
             out += `\n\n${SAVE_FAILED}`
@@ -728,7 +739,7 @@ async function handleMessage(activity: Activity, deps: BotDeps): Promise<BotRepl
       out = AI_FAILED
     }
     await reply(plain(out))
-    if (card) await reply(cardAttachment(card))
+    for (const card of cards) await reply(cardAttachment(card))
     if (answerText) {
       try {
         await deps.chat.addTurns(email, [{ kind: 'assistant', content: answerText }])
@@ -738,6 +749,20 @@ async function handleMessage(activity: Activity, deps: BotDeps): Promise<BotRepl
     }
   })
   return { status: 200 }
+}
+
+/**
+ * The Close card for a ticket the AI proposed closing, or a line to add to the answer instead. Access and status are
+ * checked again here (the AI tool checked them too); the click is the ordinary ticket Close with its own checks.
+ */
+async function closeCardFor(deps: BotDeps, user: AppUser, ticketId: string): Promise<AdaptiveCard | string> {
+  if ((user.role !== 'senior_accountant' && user.role !== 'admin') || user.viewingAs) return REFUSAL
+  const own = await deps.data.ticketForUser(user, ticketId)
+  if (!own) return REFUSAL
+  if (own.status === 'closed') return ALREADY_CLOSED
+  const t = await deps.store.ticketForCard(ticketId)
+  if (!t) return NOT_FOUND
+  return closeTicketCard(t, { siteUrl: deps.siteUrl })
 }
 
 // ---------------------------------------------------------------- save card clicks

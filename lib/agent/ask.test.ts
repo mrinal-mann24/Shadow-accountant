@@ -206,6 +206,90 @@ describe('askShadowWith', () => {
     expect(outside.text).toMatch(/not in your list/)
   })
 
+  it('proposeClose takes a listed ticket by [n], checks role, scope and status, and closes nothing', async () => {
+    const statuses: Record<string, { clientId: string; status: string }> = { t1: { clientId: 'c1', status: 'open' } }
+    const ticketForUser = vi.fn(async (_u: AppUser, id: string) => statuses[id] ?? null)
+    const run = async (user: AppUser, calls: number[], teams = true) => {
+      const deps: AskDeps = {
+        ...testDeps('ok'),
+        ticketForUser,
+        generate: async (o) => {
+          const out = []
+          for (const ticket of calls) {
+            out.push(await (o.tools.proposeClose as { execute: (i: unknown, x: unknown) => Promise<unknown> }).execute({ ticket }, { toolCallId: 't1', messages: [] }))
+          }
+          expect('proposeClose' in o.tools).toBe(teams)
+          return { text: JSON.stringify(out) }
+        },
+      }
+      return askShadowWith(deps, user, 'close the GST ticket for Alpha', { teams })
+    }
+
+    // Citations from the test tools: [1] message, [2] file, [3] ticket t1 (client c1).
+    const ok = await run(asha, [3, 3])
+    expect(ok.closes).toEqual(['t1'])
+    expect(ok.text).toContain('Close button')
+
+    const notTicket = await run(asha, [1])
+    expect(notTicket.closes).toBeUndefined()
+    expect(notTicket.text).toContain('not a ticket listed')
+
+    statuses.t1.status = 'closed'
+    const closed = await run(asha, [3])
+    expect(closed.closes).toBeUndefined()
+    expect(closed.text).toContain('already closed')
+    statuses.t1.status = 'open'
+
+    const engineer: AppUser = { id: 'u9', email: 'eng@example.com', name: 'Eng', role: 'engineer', vaId: null }
+    const refused = await run(engineer, [3])
+    expect(refused.closes).toBeUndefined()
+    expect(refused.text).toContain('Only a Senior Accountant or an Admin')
+
+    const viewingAs: AppUser = { ...admin, viewingAs: { vaId: 'va1', name: 'Asha' } }
+    expect((await run(viewingAs, [3])).closes).toBeUndefined()
+
+    delete statuses.t1
+    const gone = await run(admin, [3])
+    expect(gone.closes).toBeUndefined()
+    expect(gone.text).toContain('not found')
+
+    await run(asha, [], false) // the web chat has no proposeClose tool
+  })
+
+  it('proposeClose stops at the cap and tells the model, and a failed lookup gives a safe error', async () => {
+    const ids = ['t1', 't2', 't3', 't4']
+    const run = async (ticketForUser: AskDeps['ticketForUser'], calls: number[]) => {
+      const deps: AskDeps = {
+        ...testDeps('ok'),
+        ticketForUser,
+        tools: (ctx) => {
+          for (const id of ids) ctx.registry.add({ kind: 'ticket', id, clientId: 'c1', at: null, label: `Ticket ${id}` })
+          return {}
+        },
+        generate: async (o) => {
+          const out = []
+          for (const ticket of calls) {
+            out.push(await (o.tools.proposeClose as { execute: (i: unknown, x: unknown) => Promise<unknown> }).execute({ ticket }, { toolCallId: 't1', messages: [] }))
+          }
+          return { text: JSON.stringify(out) }
+        },
+      }
+      return askShadowWith(deps, asha, 'close these', { teams: true })
+    }
+    const open = async () => ({ clientId: 'c1', status: 'open' })
+    const capped = await run(open, [1, 2, 3, 4])
+    expect(capped.closes).toEqual(['t1', 't2', 't3'])
+    expect(capped.text).toContain('At most 3 Close cards')
+
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const failed = await run(async () => {
+      throw new Error('ticketForUser: connection refused')
+    }, [1])
+    expect(failed.closes).toBeUndefined()
+    expect(failed.text).toContain('Could not check this ticket')
+    expect(failed.text).not.toContain('connection refused')
+  })
+
   it('repairs citation ranges and drops placeholder labels, so the sources still list', async () => {
     expect(normalizeCitations('All on Nirved [1-3]. Total 89 tickets [totals]. Items [n4-n5] and [n6].')).toBe(
       'All on Nirved [1][2][3]. Total 89 tickets. Items [4][5] and [6].',

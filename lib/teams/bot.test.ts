@@ -868,6 +868,93 @@ describe('saving a transcript', () => {
 
 // ---------------------------------------------------------------- install and helpers
 
+describe('closing a ticket by typing', () => {
+  async function typed(o: Parameters<typeof setup>[0] = {}, closes = ['t1']) {
+    const s = setup(o)
+    s.ask.mockResolvedValueOnce({ text: 'Press Close on the card to close it.', citations: [], closes })
+    await handleActivity(base({ text: 'close the GST ticket for Acme' }), s.deps)
+    await s.runDeferred()
+    return s
+  }
+
+  it('shows a Close card for the ticket and closes nothing until it is pressed', async () => {
+    const s = await typed()
+    expect(s.sent[0].activity.text).toContain('Press Close')
+    const card = s.sent[1]?.activity.attachments?.[0].content
+    expect(cardText(card)).toContain('Close this ticket? Acme Traders')
+    expect(cardText(card)).toContain('GST query')
+    const actions = (card?.actions ?? []) as { type: string; data?: Record<string, unknown> }[]
+    expect(actions.filter((a) => a.type === 'Action.Execute').map((a) => a.data)).toEqual([
+      { action: 'close', ticketId: 't1', kind: 'ticket', ref: 't1' },
+    ])
+    expect(s.data.updateConversation).not.toHaveBeenCalled()
+  })
+
+  it('pressing Close on that card closes the ticket through the normal card action', async () => {
+    const s = await typed()
+    const r = await handleActivity(click({ action: 'close', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)
+    expect(s.data.updateConversation).toHaveBeenCalledWith(expect.objectContaining({ email: 'asha@x.in' }), 't1', { status: 'closed' })
+    expect(body(r).type).toBe('application/vnd.microsoft.card.adaptive')
+    expect(s.recorded.map((x) => `${x.kind}:${x.ref}:${x.action}`)).toEqual(['ticket:t1:closed'])
+  })
+
+  it('no card for a ticket the user may not see, an already closed one or an unknown id: a line instead', async () => {
+    const other = await typed({ email: 'ravi@x.in' })
+    expect(other.sent).toHaveLength(1)
+    expect(other.sent[0].activity.text).toContain(REFUSAL)
+
+    const closed = await typed({ ticketStatus: 'closed' })
+    expect(closed.sent).toHaveLength(1)
+    expect(closed.sent[0].activity.text).toContain(ALREADY_CLOSED)
+
+    const unknown = await typed({}, ['nope'])
+    expect(unknown.sent).toHaveLength(1)
+    expect(unknown.sent[0].activity.text).toContain(REFUSAL)
+  })
+
+  it('an engineer never gets a Close card, even if the AI proposed one', async () => {
+    const s = await typed({ email: 'eng@x.in' })
+    expect(s.sent).toHaveLength(1)
+    expect(s.sent[0].activity.text).toContain(REFUSAL)
+    expect(s.data.ticketForUser).not.toHaveBeenCalled()
+  })
+
+  it('a save and a close in one answer: the answer, then the Close card, then the Save card', async () => {
+    const s = setup()
+    s.ask.mockResolvedValueOnce({
+      text: 'Press the buttons below.',
+      citations: [],
+      closes: ['t1'],
+      save: { clientId: 'c1', clientName: 'Acme Traders', title: 'Call', meetingDate: null, source: 'this_message', startsWith: null },
+    })
+    await handleActivity(base({ text: 'save this for Acme and close the GST ticket<br>Ravi: we will pay on Monday' }), s.deps)
+    await s.runDeferred()
+    expect(s.sent).toHaveLength(3)
+    expect(cardText(s.sent[1].activity.attachments?.[0].content)).toContain('Close this ticket?')
+    expect(cardText(s.sent[2].activity.attachments?.[0].content)).toContain('Save to Acme Traders?')
+  })
+
+  it('after Close is pressed the card reads "Ticket:", not "New ticket:"', async () => {
+    const s = await typed()
+    const r = await handleActivity(click({ action: 'close', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)
+    const after = cardText(body(r).value)
+    expect(after).toContain('Ticket: Acme Traders')
+    expect(after).not.toContain('New ticket')
+  })
+
+  it('a failed lookup adds a friendly line and still sends the answer', async () => {
+    const s = setup()
+    s.data.ticketForUser.mockRejectedValueOnce(new Error('db down'))
+    s.ask.mockResolvedValueOnce({ text: 'Press Close on the card.', citations: [], closes: ['t1'] })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await handleActivity(base({ text: 'close the GST ticket for Acme' }), s.deps)
+    await s.runDeferred()
+    expect(s.sent).toHaveLength(1)
+    expect(s.sent[0].activity.text).toContain('Press Close')
+    expect(s.sent[0].activity.text).not.toContain('db down')
+  })
+})
+
 describe('install and other activities', () => {
   it('welcomes with the help card when the bot is added', async () => {
     const s = setup()

@@ -171,9 +171,12 @@ function ticketBody(t: TicketForCard, headingText: string, extraFacts: [string, 
 
 // ---------------------------------------------------------------- cards
 
-/** New ticket card, posted to the accountant's channel. */
+/**
+ * New ticket card, posted to the accountant's channel. Once handled it is headed "Ticket:", since it also replaces the
+ * 1:1 Close card (closeTicketCard) after its click.
+ */
 export function ticketCard(t: TicketForCard, o: { siteUrl: string; handled?: CardHandled }): AdaptiveCard {
-  const body = ticketBody(t, `New ticket: ${safe(t.clientName, 120)}`)
+  const body = ticketBody(t, `${o.handled ? 'Ticket' : 'New ticket'}: ${safe(t.clientName, 120)}`)
   const open = openUrl('Open in Shadow', ticketUrl(o.siteUrl, t.clientId, t.id))
   if (o.handled) return card([...body, ...handledBlocks(o.handled)], [open])
   return card(body, [
@@ -181,6 +184,19 @@ export function ticketCard(t: TicketForCard, o: { siteUrl: string; handled?: Car
     execute('Close', 'close', t, 'ticket', t.id),
     execute('Not a ticket', 'not_ticket', t, 'ticket', t.id),
     open,
+  ])
+}
+
+/**
+ * Sent in the 1:1 chat when someone types that a ticket should be closed: the ticket, a Close button and a link.
+ * The click is the ordinary ticket Close (same checks, and the ticket card in the accountant channel is updated too).
+ */
+export function closeTicketCard(t: TicketForCard, o: { siteUrl: string }): AdaptiveCard {
+  const body = ticketBody(t, `Close this ticket? ${safe(t.clientName, 120)}`)
+  body.push(text('Nothing changes until you press Close.', { isSubtle: true }))
+  return card(body, [
+    execute('Close', 'close', t, 'ticket', t.id, { style: 'positive' }),
+    openUrl('Open in Shadow', ticketUrl(o.siteUrl, t.clientId, t.id)),
   ])
 }
 
@@ -295,6 +311,7 @@ export function helpCard(o: { siteUrl: string }): AdaptiveCard {
         ['Ask', 'Anything about your clients, for example "open tickets for Puneeth\'s clients". Answers come with sources.'],
         ['General', 'Accounting, GST or Tally questions, or help drafting a message.'],
         ['Save', 'Paste a call transcript or meeting notes and say "save this for <client>". Press Save on the card to store it.'],
+        ['Close', 'Say "close the GST ticket for <client>". Press Close on the card to close it.'],
         ['new chat', 'Forget our earlier messages and start fresh'],
         ['help', 'Show this card'],
       ]),
