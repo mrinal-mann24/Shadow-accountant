@@ -716,7 +716,7 @@ export type Database = {
         ]
       }
       document_uploads: {
-        // caption: added by hand from supabase/proposals/2026-11-24-document-uploads-caption.sql until the types are regenerated.
+        // caption: added by hand from supabase/applied/2026-11-24-document-uploads-caption.sql until the types are regenerated.
         Row: {
           caption: string | null
           client_id: string | null

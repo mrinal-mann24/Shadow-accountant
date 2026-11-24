@@ -1,5 +1,5 @@
--- APPROVED 24 Nov 2026 in chat ("Yes, approve"). Not applied yet: run once in the Supabase SQL editor (Supabase VA),
--- then move this file to supabase/applied/. Rollback at the bottom.
+-- APPLIED 24 Nov 2026 to Supabase VA (approved in chat "Yes, approve"; run by the user; column checked present,
+-- text, nullable). The column comment below was not run; it is optional. Rollback at the bottom.
 --
 -- What it stores: the text a client typed under a WhatsApp image or PDF ("October bill, please book it under AP").
 -- Today va-bot saves that text only as a separate client_messages row with no link to the file, so the Teams
