@@ -251,6 +251,24 @@ describe('filesCard', () => {
     expect(json(c)).toContain('1 new file from Acme')
     expect(json(c)).not.toContain('more')
   })
+
+  it('shows the text the client typed under a file, masked, plain and clipped; nothing when there is none', () => {
+    const files = [
+      { id: 'u-1', name: 'oct.pdf', at: '', caption: 'October bill, please book it under AP' },
+      { id: 'u-2', name: 'login.jpg', at: '', caption: 'portal password: Abc@1234 [x](https://evil.test)' },
+      { id: 'u-3', name: 'long.pdf', at: '', caption: 'x'.repeat(500) },
+      { id: 'u-4', name: 'plain.pdf', at: '', caption: null },
+    ]
+    const s = JSON.stringify(filesCard({ clientId: 'c-9', clientName: 'Acme', files, siteUrl: SITE }).body)
+    expect(s).toContain('\\"October bill, please book it under AP\\"')
+    expect(s).not.toContain('Abc@1234')
+    expect(s).not.toContain('https://evil.test')
+    expect(s).not.toContain('x'.repeat(201))
+    // u-4 has no caption: its row is the name and the time only.
+    const rows = (filesCard({ clientId: 'c-9', clientName: 'Acme', files: [files[3]], siteUrl: SITE }).body as { columns?: { items: unknown[] }[] }[])
+      .filter((b) => b.columns)
+    expect(rows[0].columns![0].items).toHaveLength(2)
+  })
 })
 
 describe('plainText (client text never becomes a link or an image)', () => {

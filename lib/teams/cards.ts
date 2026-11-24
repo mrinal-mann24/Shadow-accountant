@@ -273,8 +273,16 @@ export function fileUrl(siteUrl: string, clientId: string, uploadId: string): st
   return `${clientUrl(siteUrl, clientId)}?file=${id}#file-${id}`
 }
 
-/** One file per row: name and time, and a View button that opens Shadow on that file. */
-function fileRow(f: { name: string; at: string; url: string }) {
+/** Most characters of a file's caption shown on the files card. */
+export const MAX_CAPTION = 200
+
+/** One file per row: name, the text the client typed under it (masked), time, and a View button that opens Shadow
+ *  on that file. */
+function fileRow(f: { name: string; at: string; url: string; caption?: string | null }) {
+  const caption = safe(f.caption, MAX_CAPTION)
+  const items: unknown[] = [text(safe(f.name, 120) || 'Unnamed file')]
+  if (caption) items.push(text(`"${caption}"`, { isSubtle: true, spacing: 'None', italic: true }))
+  items.push(text(formatIst(f.at) || ' ', { isSubtle: true, spacing: 'None', size: 'Small' }))
   return {
     type: 'ColumnSet',
     separator: true,
@@ -283,7 +291,7 @@ function fileRow(f: { name: string; at: string; url: string }) {
         type: 'Column',
         width: 'stretch',
         verticalContentAlignment: 'Center',
-        items: [text(safe(f.name, 120) || 'Unnamed file'), text(formatIst(f.at) || ' ', { isSubtle: true, spacing: 'None', size: 'Small' })],
+        items,
       },
       { type: 'Column', width: 'auto', verticalContentAlignment: 'Center', items: [{ type: 'ActionSet', actions: [openUrl('View', f.url)] }] },
     ],
@@ -294,7 +302,7 @@ function fileRow(f: { name: string; at: string; url: string }) {
 export function filesCard(o: {
   clientId: string
   clientName: string
-  files: { id: string; name: string; at: string }[]
+  files: { id: string; name: string; at: string; caption?: string | null }[]
   siteUrl: string
 }): AdaptiveCard {
   const n = o.files.length

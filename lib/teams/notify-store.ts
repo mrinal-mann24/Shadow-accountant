@@ -17,6 +17,8 @@ export type UploadForNotify = {
   fileName: string | null
   uploadedAt: string
   senderPhone: string | null
+  /** Text the sender typed under the file on WhatsApp (raw; the card masks it). Null when there was none. */
+  caption: string | null
 }
 
 /**
@@ -186,7 +188,7 @@ export function supabaseNotifyReads(db: SupabaseClient<Database>): NotifyReads {
       if (!clientIds.length) return []
       const { data, error } = await db
         .from('document_uploads')
-        .select('upload_id, client_id, client_name, file_name, uploaded_at, sender_phone')
+        .select('upload_id, client_id, client_name, file_name, uploaded_at, sender_phone, caption')
         .in('client_id', clientIds)
         .gte('uploaded_at', o.uploadedSince)
         .order('uploaded_at', { ascending: true })
@@ -202,6 +204,7 @@ export function supabaseNotifyReads(db: SupabaseClient<Database>): NotifyReads {
           fileName: u.file_name,
           uploadedAt: u.uploaded_at!,
           senderPhone: u.sender_phone,
+          caption: u.caption ?? null,
         }))
     },
   }

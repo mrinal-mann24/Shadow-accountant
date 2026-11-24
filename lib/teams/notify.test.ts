@@ -27,13 +27,14 @@ vi.mock('./cards', () => ({
     id: t.id,
     ...o,
   }),
-  filesCard: (o: { clientId: string; files: { name: string }[] }) => ({
+  filesCard: (o: { clientId: string; files: { name: string; caption?: string | null }[] }) => ({
     type: 'AdaptiveCard',
     version: '1.5',
     body: [],
     kind: 'files',
     clientId: o.clientId,
     files: o.files.map((f) => f.name),
+    captions: o.files.map((f) => f.caption ?? null),
   }),
   cardAttachment: (card: unknown) => ({
     type: 'message',
@@ -128,6 +129,7 @@ function upload(p: Partial<UploadForNotify> & { uploadId: string }): UploadForNo
     fileName: `${p.uploadId}.pdf`,
     uploadedAt: ist('2026-11-16T11:45:00'),
     senderPhone: '9800000001',
+    caption: null,
     ...p,
   }
 }
@@ -831,6 +833,15 @@ describe('runTeamsNotifyJob files', () => {
     expect(store.rows.get('files:u1')?.activity_id).toBe('act-1')
     await run(d)
     expect(connector.sent).toHaveLength(2)
+  })
+
+  it('passes the text typed under each file to the files card', async () => {
+    const uploads = [upload({ uploadId: 'u1', caption: 'October bill, please book it' }), upload({ uploadId: 'u2' })]
+    const connector = fakeConnector()
+    await run(deps({ reads: fakeReads({ uploads }), store: fakeStore(), connector }))
+    expect(connector.sent).toEqual([
+      { conversationId: 'ch-va1', card: expect.objectContaining({ files: ['u1.pdf', 'u2.pdf'], captions: ['October bill, please book it', null] }) },
+    ])
   })
 
   it('a files card holds only the uploads this run claimed', async () => {
