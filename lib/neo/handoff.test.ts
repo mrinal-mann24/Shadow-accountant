@@ -100,22 +100,29 @@ describe('where va-bot saved the file', () => {
     expect(istDay('bad')).toBeNull()
   })
 
-  it('tries the date folder (and the day before) only from 18 Nov 2026, with and without Client Files and the parent', () => {
+  it('tries the date folder (and the day before) before the client folder, with and without Client Files and the parent', () => {
     const paths = candidateFolders({ folderName: 'KRRD', uploadedAt: '2026-11-19T05:00:00Z', parentFolder: 'KRRD Group' }).map((p) => p.join('/'))
     expect(paths.slice(0, 3)).toEqual(['Client Files/KRRD Group/KRRD/2026-11-19', 'Client Files/KRRD Group/KRRD/2026-11-18', 'Client Files/KRRD Group/KRRD'])
     expect(paths).toContain('KRRD/2026-11-19')
     expect(paths).toContain('KRRD')
     expect(new Set(paths).size).toBe(paths.length)
 
-    const old = candidateFolders({ folderName: 'KRRD', uploadedAt: '2026-11-10T05:00:00Z' }).map((p) => p.join('/'))
-    expect(old).toEqual(['Client Files/KRRD', 'KRRD'])
-    const firstDay = candidateFolders({ folderName: 'KRRD', uploadedAt: '2026-11-18T05:00:00Z' }).map((p) => p.join('/'))
-    expect(firstDay[0]).toBe('Client Files/KRRD/2026-11-18')
-    expect(firstDay).not.toContain('Client Files/KRRD/2026-11-17')
+    // Older files: a full-history catch-up may have put them in a date folder; the client folder is still tried.
+    const old = candidateFolders({ folderName: 'KRRD', uploadedAt: '2026-11-06T05:00:00Z' }).map((p) => p.join('/'))
+    expect(old).toEqual([
+      'Client Files/KRRD/2026-11-06',
+      'Client Files/KRRD/2026-11-05',
+      'Client Files/KRRD',
+      'KRRD/2026-11-06',
+      'KRRD/2026-11-05',
+      'KRRD',
+    ])
+    const noTime = candidateFolders({ folderName: 'KRRD', uploadedAt: null }).map((p) => p.join('/'))
+    expect(noTime).toEqual(['Client Files/KRRD', 'KRRD'])
   })
 
   it('splits an older folder_name that holds a path, without doubling Client Files', () => {
-    const paths = candidateFolders({ folderName: 'Client Files/Alpha/', uploadedAt: '2026-11-01T05:00:00Z' }).map((p) => p.join('/'))
+    const paths = candidateFolders({ folderName: 'Client Files/Alpha/', uploadedAt: null }).map((p) => p.join('/'))
     expect(paths).toEqual(['Client Files/Alpha', 'Alpha'])
   })
 

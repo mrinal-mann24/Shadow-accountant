@@ -95,8 +95,6 @@ export function safeFolderName(name: string | null | undefined): string {
   return n || 'unnamed'
 }
 
-/** va-bot puts files in a date sub-folder from this IST day on (config.DATE_FOLDERS_FROM). */
-export const DATE_FOLDERS_FROM = '2026-11-18'
 /** SharePoint folder that holds every client folder (config.SHAREPOINT_ROOT_FOLDER). */
 export const CLIENT_FILES_ROOT = 'Client Files'
 
@@ -120,6 +118,8 @@ function shiftDay(day: string, days: number): string {
  * [Client Files /] [parent folder /] client folder [/ YYYY-MM-DD]. The accountant may have connected the library
  * root or the "Client Files" folder itself, so both are tried. The date folder is the IST day of the WhatsApp
  * message (uploaded_at is logged right after it); the day before is tried too for files saved around midnight.
+ * Date folders are tried for any day: the live bot uses them from 18 Nov 2026, and a full-history catch-up for a new
+ * client can put older files in date folders too. The client folder itself is always tried after them.
  */
 export function candidateFolders(f: { folderName: string; uploadedAt: string | null; parentFolder?: string | null }): string[][] {
   // folder_name is normally the client folder alone ("KRRD"); an older row may hold a path ("Client Files/KRRD/").
@@ -128,7 +128,7 @@ export function candidateFolders(f: { folderName: string; uploadedAt: string | n
   const client = clientParts.length ? clientParts : [safeFolderName(f.folderName)]
   const parent = f.parentFolder ? safeFolderName(f.parentFolder) : null
   const day = istDay(f.uploadedAt)
-  const days = day && day >= DATE_FOLDERS_FROM ? [day, shiftDay(day, -1)].filter((d) => d >= DATE_FOLDERS_FROM) : []
+  const days = day ? [day, shiftDay(day, -1)] : []
   const bases: string[][] = parent && client.length === 1 ? [[parent, ...client], client] : [client]
   const out: string[][] = []
   const seen = new Set<string>()
