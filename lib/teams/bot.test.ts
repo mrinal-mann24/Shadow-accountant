@@ -53,6 +53,9 @@ const NOW = new Date('2026-11-18T06:00:00.000Z')
 // Reminder / escalation refs are '<ticketId>@<last message time>' (notify.ts waitRef).
 const E1 = 't1@2026-11-18T05:00:00.000Z'
 const R1 = 't1@2026-11-18T05:00:00.000Z'
+// Senior Accountants work in Shadow: any card click from them gets this message and changes nothing (bot.ts).
+const USE_SHADOW = 'Please update this in Shadow: press Open in Shadow on the card.'
+const ADMIN = 'admin@x.in'
 
 const users: Record<string, AppUser> = {
   'asha@x.in': { id: 'u1', email: 'asha@x.in', name: 'Asha', role: 'senior_accountant', vaId: 'va-1' },
@@ -344,8 +347,9 @@ describe('card actions', () => {
     expect(s.recorded).toHaveLength(0)
   })
 
-  it('start: own accountant records started and returns the handled card; updates the stored card', async () => {
+  it('start: an admin records started and returns the handled card; updates the stored card', async () => {
     const s = setup({
+      email: ADMIN,
       rows: [
         { kind: 'ticket', ref_id: 't1', client_id: 'c1', channel_id: '19:chan', activity_id: 'act-9', sent_at: '', action: null, action_by: null, action_at: null },
       ],
@@ -353,9 +357,9 @@ describe('card actions', () => {
     const r = await handleActivity(click({ action: 'start', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)
     expect(body(r).statusCode).toBe(200)
     expect(body(r).type).toBe('application/vnd.microsoft.card.adaptive')
-    expect(cardText(body(r).value)).toContain('Asha')
+    expect(cardText(body(r).value)).toContain('Started by Admin One')
     expect(cardText(body(r).value)).not.toContain('Action.Execute')
-    expect(s.recorded).toEqual([{ kind: 'ticket', ref: 't1', action: 'started', by: 'asha@x.in', at: NOW.toISOString() }])
+    expect(s.recorded).toEqual([{ kind: 'ticket', ref: 't1', action: 'started', by: ADMIN, at: NOW.toISOString() }])
     expect(s.updated).toHaveLength(0) // after the invoke answer
     await s.runDeferred()
     expect(s.updated).toHaveLength(1)
@@ -364,6 +368,7 @@ describe('card actions', () => {
 
   it('start from a reminder also records on the ticket row; a failing card update is ignored', async () => {
     const s = setup({
+      email: ADMIN,
       rows: [
         { kind: 'reminder', ref_id: R1, client_id: 'c1', channel_id: '19:chan', activity_id: 'act-2', sent_at: '', action: null, action_by: null, action_at: null },
       ],
@@ -378,11 +383,25 @@ describe('card actions', () => {
     expect(s.recorded.map((x) => `${x.kind}:${x.ref}:${x.action}`)).toEqual([`reminder:${R1}:started`, 'ticket:t1:started'])
   })
 
-  it('start: an accountant from another client gets the friendly refusal', async () => {
-    const s = setup({ email: 'ravi@x.in' })
-    const r = await handleActivity(click({ action: 'start', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)
-    expect(body(r)).toEqual({ statusCode: 200, type: 'application/vnd.microsoft.activity.message', value: REFUSAL })
-    expect(s.recorded).toHaveLength(0)
+  it('a senior accountant (own client or another) clicking start, close or not_ticket is told to use Shadow; nothing changes', async () => {
+    const rows: NotificationRow[] = [
+      { kind: 'ticket', ref_id: 't1', client_id: 'c1', channel_id: '19:chan', activity_id: 'act-9', sent_at: '', action: null, action_by: null, action_at: null },
+    ]
+    for (const email of ['asha@x.in', 'ravi@x.in']) {
+      for (const action of ['start', 'close', 'not_ticket'] as const) {
+        for (const [kind, ref] of [['ticket', 't1'], ['reminder', R1], ['escalation', E1]] as const) {
+          const s = setup({ email, rows })
+          const r = await handleActivity(click({ action, ticketId: 't1', kind, ref }), s.deps)
+          expect(body(r)).toEqual({ statusCode: 200, type: 'application/vnd.microsoft.activity.message', value: USE_SHADOW })
+          await s.runDeferred()
+          expect(s.data.ticketForUser).not.toHaveBeenCalled()
+          expect(s.data.updateConversation).not.toHaveBeenCalled()
+          expect(s.recorded).toHaveLength(0)
+          expect(s.updated).toHaveLength(0)
+          expect(s.sent).toHaveLength(0)
+        }
+      }
+    }
   })
 
   it('start: an engineer is refused', async () => {
@@ -393,9 +412,9 @@ describe('card actions', () => {
 
   it('close and not_ticket close the ticket and record on the clicked and ticket rows', async () => {
     for (const action of ['close', 'not_ticket'] as const) {
-      const s = setup()
+      const s = setup({ email: ADMIN })
       const r = await handleActivity(click({ action, ticketId: 't1', kind: 'escalation', ref: E1 }), s.deps)
-      expect(s.data.updateConversation).toHaveBeenCalledWith(expect.objectContaining({ email: 'asha@x.in' }), 't1', { status: 'closed' })
+      expect(s.data.updateConversation).toHaveBeenCalledWith(expect.objectContaining({ email: ADMIN }), 't1', { status: 'closed' })
       expect(body(r).type).toBe('application/vnd.microsoft.card.adaptive')
       const done = action === 'close' ? 'closed' : 'not_ticket'
       expect(s.recorded.map((x) => `${x.kind}:${x.ref}:${x.action}`)).toEqual([`escalation:${E1}:${done}`, `ticket:t1:${done}`])
@@ -409,18 +428,24 @@ describe('card actions', () => {
     expect(s.recorded).toHaveLength(0)
   })
 
-  it('close: another accountant and a missing ticket get the same refusal (existence is not revealed)', async () => {
+  it('close: another accountant gets the same answer for a real and a missing ticket (existence is not revealed)', async () => {
     const s = setup({ email: 'ravi@x.in' })
-    expect(body(await handleActivity(click({ action: 'close', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)).value).toBe(REFUSAL)
-    const s2 = setup()
-    const r = await handleActivity(click({ action: 'close', ticketId: 'nope', kind: 'ticket', ref: 'nope' }), s2.deps)
+    expect(body(await handleActivity(click({ action: 'close', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)).value).toBe(USE_SHADOW)
+    expect(body(await handleActivity(click({ action: 'close', ticketId: 'nope', kind: 'ticket', ref: 'nope' }), s.deps)).value).toBe(USE_SHADOW)
+    expect(s.data.updateConversation).not.toHaveBeenCalled()
+  })
+
+  it('close: an admin pressing Close on a missing ticket gets the refusal and nothing is closed', async () => {
+    const s = setup({ email: ADMIN })
+    const r = await handleActivity(click({ action: 'close', ticketId: 'nope', kind: 'ticket', ref: 'nope' }), s.deps)
     expect(body(r).value).toBe(REFUSAL)
-    expect(s2.data.updateConversation).not.toHaveBeenCalled()
+    expect(s.data.updateConversation).not.toHaveBeenCalled()
+    expect(s.recorded).toHaveLength(0)
   })
 
   it('a closed ticket is not closed again, started or marked not a ticket (no second action recorded)', async () => {
     for (const action of ['close', 'not_ticket', 'start'] as const) {
-      const s = setup({ ticketStatus: 'closed' })
+      const s = setup({ email: ADMIN, ticketStatus: 'closed' })
       const r = await handleActivity(click({ action, ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)
       expect(body(r).value).toBe(ALREADY_CLOSED)
       expect(s.data.updateConversation).not.toHaveBeenCalled()
@@ -441,6 +466,9 @@ describe('card actions', () => {
     await handleActivity(click({ action: 'reassign', ticketId: 't1', kind: 'escalation', ref: E1, vaId: 'va-2' }), s.deps)
     await s.runDeferred()
     expect(s.sent.map((x) => x.conversationId)).toEqual(['a:ravi-1on1'])
+    // The new accountant works on it in Shadow: Open in Shadow only, no buttons.
+    expect(cardText(s.sent[0].activity)).not.toContain('Action.Execute')
+    expect(cardText(s.sent[0].activity)).toContain('Open in Shadow')
   })
 
   it('reassign: admin reassigns, records with a note and posts the ticket card to the new channel (fallback)', async () => {
@@ -453,7 +481,10 @@ describe('card actions', () => {
     await s.runDeferred()
     expect(s.sent).toHaveLength(1)
     expect(s.sent[0].conversationId).toBe('19:ravi')
-    expect(cardText(s.sent[0].activity)).toContain('Action.Execute')
+    const posted = s.sent[0].activity.attachments?.[0].content
+    expect(cardText(posted)).toContain('New ticket: Acme Traders')
+    expect(cardText(posted)).not.toContain('Action.Execute')
+    expect((posted?.actions as { type: string; title: string }[]).map((a) => [a.type, a.title])).toEqual([['Action.OpenUrl', 'Open in Shadow']])
     expect(cardText(body(r).value)).toContain('Reassigned to Ravi')
     expect(s.recorded.map((x) => `${x.kind}:${x.ref}:${x.action}`)).toEqual([`escalation:${E1}:reassigned`, 'ticket:t1:reassigned'])
   })
@@ -466,11 +497,12 @@ describe('card actions', () => {
     expect(cardText(body(r).value)).toContain('have not opened the Shadow chat')
   })
 
-  it('reassign: a senior accountant cannot reassign; a missing pick asks for one', async () => {
+  it('reassign: a senior accountant is told to use Shadow; a missing pick asks for one', async () => {
     const s = setup()
     const r = await handleActivity(click({ action: 'reassign', ticketId: 't1', kind: 'escalation', ref: E1, vaId: 'va-2' }), s.deps)
-    expect(body(r).value).toBe(REFUSAL)
+    expect(body(r).value).toBe(USE_SHADOW)
     expect(s.data.reassignTicket).not.toHaveBeenCalled()
+    expect(s.recorded).toHaveLength(0)
     const a = setup({ email: 'admin@x.in' })
     const r2 = await handleActivity(click({ action: 'reassign', ticketId: 't1', kind: 'escalation', ref: E1, vaId: '' }), a.deps)
     expect(String(body(r2).value)).toMatch(/pick an accountant/i)
@@ -515,7 +547,7 @@ describe('card actions', () => {
   })
 
   it('an unexpected data error becomes a friendly message without details', async () => {
-    const s = setup()
+    const s = setup({ email: ADMIN })
     s.data.updateConversation.mockRejectedValueOnce(new Error('updateConversation: connection refused at db.internal:5432'))
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
     const r = await handleActivity(click({ action: 'close', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)
@@ -877,9 +909,22 @@ describe('closing a ticket by typing', () => {
     return s
   }
 
-  it('shows a Close card for the ticket and closes nothing until it is pressed', async () => {
+  it('a senior accountant gets the ticket with only Open in Shadow (close it in Shadow), and nothing is closed', async () => {
     const s = await typed()
     expect(s.sent[0].activity.text).toContain('Press Close')
+    const card = s.sent[1]?.activity.attachments?.[0].content
+    expect(cardText(card)).toContain('Close in Shadow: Acme Traders')
+    expect(cardText(card)).toContain('Open the ticket in Shadow and close it there.')
+    expect(cardText(card)).toContain('GST query')
+    expect(cardText(card)).not.toContain('Close this ticket?')
+    expect(cardText(card)).not.toContain('Action.Execute')
+    const actions = (card?.actions ?? []) as { type: string; title: string }[]
+    expect(actions.map((a) => [a.type, a.title])).toEqual([['Action.OpenUrl', 'Open in Shadow']])
+    expect(s.data.updateConversation).not.toHaveBeenCalled()
+  })
+
+  it('an admin gets a Close card for the ticket and nothing is closed until it is pressed', async () => {
+    const s = await typed({ email: ADMIN })
     const card = s.sent[1]?.activity.attachments?.[0].content
     expect(cardText(card)).toContain('Close this ticket? Acme Traders')
     expect(cardText(card)).toContain('GST query')
@@ -890,12 +935,20 @@ describe('closing a ticket by typing', () => {
     expect(s.data.updateConversation).not.toHaveBeenCalled()
   })
 
-  it('pressing Close on that card closes the ticket through the normal card action', async () => {
-    const s = await typed()
+  it('an admin pressing Close on that card closes the ticket through the normal card action', async () => {
+    const s = await typed({ email: ADMIN })
     const r = await handleActivity(click({ action: 'close', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)
-    expect(s.data.updateConversation).toHaveBeenCalledWith(expect.objectContaining({ email: 'asha@x.in' }), 't1', { status: 'closed' })
+    expect(s.data.updateConversation).toHaveBeenCalledWith(expect.objectContaining({ email: ADMIN }), 't1', { status: 'closed' })
     expect(body(r).type).toBe('application/vnd.microsoft.card.adaptive')
     expect(s.recorded.map((x) => `${x.kind}:${x.ref}:${x.action}`)).toEqual(['ticket:t1:closed'])
+  })
+
+  it('a senior accountant pressing Close on an older Close card is told to use Shadow; nothing is closed', async () => {
+    const s = await typed()
+    const r = await handleActivity(click({ action: 'close', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)
+    expect(body(r).value).toBe(USE_SHADOW)
+    expect(s.data.updateConversation).not.toHaveBeenCalled()
+    expect(s.recorded).toHaveLength(0)
   })
 
   it('no card for a ticket the user may not see, an already closed one or an unknown id: a line instead', async () => {
@@ -930,12 +983,12 @@ describe('closing a ticket by typing', () => {
     await handleActivity(base({ text: 'save this for Acme and close the GST ticket<br>Ravi: we will pay on Monday' }), s.deps)
     await s.runDeferred()
     expect(s.sent).toHaveLength(3)
-    expect(cardText(s.sent[1].activity.attachments?.[0].content)).toContain('Close this ticket?')
+    expect(cardText(s.sent[1].activity.attachments?.[0].content)).toContain('Close in Shadow: Acme Traders')
     expect(cardText(s.sent[2].activity.attachments?.[0].content)).toContain('Save to Acme Traders?')
   })
 
   it('after Close is pressed the card reads "Ticket:", not "New ticket:"', async () => {
-    const s = await typed()
+    const s = await typed({ email: ADMIN })
     const r = await handleActivity(click({ action: 'close', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)
     const after = cardText(body(r).value)
     expect(after).toContain('Ticket: Acme Traders')
@@ -1104,6 +1157,7 @@ describe('identity speed: member lookups are cached', () => {
 describe('invoke budget: posts run after the answer', () => {
   it('close answers with the card before the stored copy is updated; a failing reassign post is only logged', async () => {
     const s = setup({
+      email: ADMIN,
       rows: [{ kind: 'ticket', ref_id: 't1', client_id: 'c1', channel_id: '19:chan', activity_id: 'act-9', sent_at: '', action: null, action_by: null, action_at: null }],
     })
     const r = await handleActivity(click({ action: 'close', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)
@@ -1139,7 +1193,7 @@ describe('card data is bound to its ticket', () => {
 })
 
 describe('ping', () => {
-  it('posts the reminder with its own #ping ref, keeps the escalation buttons and replies with a note', async () => {
+  it('posts a read-only reminder (Open in Shadow only) to the accountant, keeps the escalation buttons and replies with a note', async () => {
     const map = emptyMap()
     map.accountants['va-1'] = { id: '19:asha', name: 'Asha tickets' }
     const s = setup({ email: 'admin@x.in', map })
@@ -1147,14 +1201,20 @@ describe('ping', () => {
     const card = cardText(body(r).value)
     expect(card).toContain('Action.Execute')
     expect(card).toContain('"action":"reassign"')
+    expect(card).toContain('"action":"ping"')
     expect(card).not.toContain('Pinged')
     await s.runDeferred()
-    expect(cardText(s.sent[0].activity)).toContain(`"ref":"${E1}#ping"`)
+    const reminder = s.sent[0].activity.attachments?.[0].content
+    expect(s.sent[0].activity.text).toBe('An Admin asked you to pick this up.') // Asha's own 1:1 chat
+    expect(cardText(reminder)).toContain('Client waiting')
+    expect(cardText(reminder)).not.toContain('Action.Execute')
+    expect(cardText(reminder)).not.toContain('#ping')
+    expect((reminder?.actions as { type: string; title: string }[]).map((a) => [a.type, a.title])).toEqual([['Action.OpenUrl', 'Open in Shadow']])
     expect(s.sent[1]).toMatchObject({ conversationId: 'a:1on1', activity: { text: 'Accountant pinged by Admin One' } })
   })
 
-  it('a click on the ping reminder is not recorded on the real reminder row', async () => {
-    const s = setup()
+  it('a click on an older ping reminder (by an admin) is not recorded on the real reminder row', async () => {
+    const s = setup({ email: ADMIN })
     await handleActivity(click({ action: 'start', ticketId: 't1', kind: 'reminder', ref: `${R1}#ping` }), s.deps)
     expect(s.recorded.map((x) => `${x.kind}:${x.ref}`)).toEqual([`reminder:${R1}#ping`, 'ticket:t1'])
   })
@@ -1240,39 +1300,60 @@ describe('follow-up card clicks', () => {
   const DUE = followUpRef('f1', 'due')
   const MISSED = followUpRef('f1', 'missed')
 
+  it('a senior accountant (own client or another) clicking done, cancel or extend is told to use Shadow; nothing changes', async () => {
+    const rows: NotificationRow[] = [
+      { kind: 'escalation', ref_id: MISSED, client_id: 'c1', channel_id: '19:esc', activity_id: 'act-7', sent_at: '', action: null, action_by: null, action_at: null },
+    ]
+    for (const email of ['asha@x.in', 'ravi@x.in']) {
+      for (const action of ['done', 'cancel', 'extend'] as const) {
+        for (const [kind, ref] of [['reminder', DUE], ['escalation', MISSED]] as const) {
+          const s = setup({ email, rows })
+          const r = await handleActivity(fuClick({ action, followUpId: 'f1', kind, ref }), s.deps)
+          expect(body(r)).toEqual({ statusCode: 200, type: 'application/vnd.microsoft.activity.message', value: USE_SHADOW })
+          await s.runDeferred()
+          expect(s.followUps.action).not.toHaveBeenCalled()
+          expect(s.recorded).toHaveLength(0)
+          expect(s.updated).toHaveLength(0)
+          expect(s.sent).toHaveLength(0)
+        }
+      }
+    }
+  })
+
   it('done: calls followUpAction, answers the handled card, records nothing in teams_notifications', async () => {
-    const s = setup()
+    const s = setup({ email: ADMIN })
     const r = await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), s.deps)
-    expect(s.followUps.action).toHaveBeenCalledWith(expect.objectContaining({ email: 'asha@x.in' }), 'f1', 'done', NOW)
+    expect(s.followUps.action).toHaveBeenCalledWith(expect.objectContaining({ email: ADMIN }), 'f1', 'done', NOW)
     expect(body(r).type).toBe('application/vnd.microsoft.card.adaptive')
     const text = cardText(body(r).value)
     expect(text).toContain('Promise due today: Acme Traders')
-    expect(text).toContain('Marked done by Asha')
+    expect(text).toContain('Marked done by Admin One')
     expect(text).not.toContain('Action.Execute')
     expect(s.recorded).toHaveLength(0)
   })
 
   it('cancel on a repeat ask shows Marked not a repeat; the heading follows the ref', async () => {
-    const s = setup()
+    const s = setup({ email: ADMIN })
     vi.mocked(s.followUps.action).mockResolvedValueOnce({ ...fuView, kind: 'repeat_ask', status: 'cancelled', dueAt: null })
     const r = await handleActivity(fuClick({ action: 'cancel', followUpId: 'f1', kind: 'escalation', ref: followUpRef('f1', 'repeat') }), s.deps)
     const text = cardText(body(r).value)
     expect(s.followUps.action).toHaveBeenCalledWith(expect.anything(), 'f1', 'cancel', NOW)
     expect(text).toContain('Client asked again: Acme Traders')
-    expect(text).toContain('Marked not a repeat by Asha')
+    expect(text).toContain('Marked not a repeat by Admin One')
   })
 
   it('extend: the card shows the new due date', async () => {
-    const s = setup()
+    const s = setup({ email: ADMIN })
     const r = await handleActivity(fuClick({ action: 'extend', followUpId: 'f1', kind: 'escalation', ref: MISSED }), s.deps)
     const text = cardText(body(r).value)
     expect(text).toContain('Promise missed: Acme Traders')
-    expect(text).toContain('Extended by 1 day by Asha')
+    expect(text).toContain('Extended by 1 day by Admin One')
     expect(text).toContain('New due date: 19 Nov, 6:00 pm')
   })
 
   it('refreshes the stored card copy after the answer when it has an activity id', async () => {
     const s = setup({
+      email: ADMIN,
       rows: [
         { kind: 'escalation', ref_id: MISSED, client_id: 'c1', channel_id: '19:esc', activity_id: 'act-7', sent_at: '', action: null, action_by: null, action_at: null },
       ],
@@ -1282,21 +1363,22 @@ describe('follow-up card clicks', () => {
     await s.runDeferred()
     expect(s.updated).toHaveLength(1)
     expect(s.updated[0]).toMatchObject({ conversationId: '19:esc', activityId: 'act-7' })
-    expect(cardText(s.updated[0].activity)).toContain('Marked done by Asha')
+    expect(cardText(s.updated[0].activity)).toContain('Marked done by Admin One')
 
-    const none = setup()
+    const none = setup({ email: ADMIN })
     await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), none.deps)
     await none.runDeferred()
     expect(none.updated).toHaveLength(0)
   })
 
-  it('Forbidden (another accountant, engineer, viewing as) gets the refusal', async () => {
-    for (const email of ['ravi@x.in', 'eng@x.in']) {
-      const s = setup({ email })
-      const r = await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), s.deps)
-      expect(body(r)).toEqual({ statusCode: 200, type: 'application/vnd.microsoft.activity.message', value: REFUSAL })
-    }
-    const v = setup()
+  it('Forbidden (engineer, an out-of-scope admin call, viewing as) gets the refusal', async () => {
+    const e = setup({ email: 'eng@x.in' })
+    const r = await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), e.deps)
+    expect(body(r)).toEqual({ statusCode: 200, type: 'application/vnd.microsoft.activity.message', value: REFUSAL })
+    const f = setup({ email: ADMIN })
+    vi.mocked(f.followUps.action).mockRejectedValueOnce(new ForbiddenError())
+    expect(body(await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), f.deps)).value).toBe(REFUSAL)
+    const v = setup({ email: ADMIN })
     vi.mocked(v.followUps.action).mockRejectedValueOnce(new ViewAsReadOnlyError())
     expect(body(await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), v.deps)).value).toBe(REFUSAL)
   })
@@ -1308,12 +1390,12 @@ describe('follow-up card clicks', () => {
       [new Error('Only promises and document requests can be extended.'), FOLLOW_UP_NO_EXTEND],
     ]
     for (const [e, msg] of cases) {
-      const s = setup()
+      const s = setup({ email: ADMIN })
       vi.mocked(s.followUps.action).mockRejectedValueOnce(e)
       const r = await handleActivity(fuClick({ action: 'extend', followUpId: 'f1', kind: 'reminder', ref: DUE }), s.deps)
       expect(body(r).value).toBe(msg)
     }
-    const s = setup()
+    const s = setup({ email: ADMIN })
     vi.mocked(s.followUps.action).mockRejectedValueOnce(new Error('update follow_ups: connection refused at db.internal:5432'))
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
     const r = await handleActivity(fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }), s.deps)
@@ -1330,7 +1412,7 @@ describe('follow-up card clicks', () => {
   })
 
   it('a duplicate activity id answers Already done and acts once', async () => {
-    const s = setup()
+    const s = setup({ email: ADMIN })
     const a = fuClick({ action: 'done', followUpId: 'f1', kind: 'reminder', ref: DUE }, 'inv-fu-1')
     expect(body(await handleActivity(a, s.deps)).type).toBe('application/vnd.microsoft.card.adaptive')
     expect(body(await handleActivity(a, s.deps))).toEqual({ statusCode: 200, type: 'application/vnd.microsoft.activity.message', value: ALREADY_DONE })
@@ -1352,9 +1434,9 @@ describe('follow-up card clicks', () => {
   })
 
   it('ticket cards still go the ticket way', async () => {
-    const s = setup()
+    const s = setup({ email: ADMIN })
     const r = await handleActivity(click({ action: 'start', ticketId: 't1', kind: 'ticket', ref: 't1' }), s.deps)
-    expect(cardText(body(r).value)).toContain('Started by Asha')
+    expect(cardText(body(r).value)).toContain('Started by Admin One')
     expect(s.followUps.action).not.toHaveBeenCalled()
   })
 })

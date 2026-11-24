@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 // Cards, the prefilter and every real store / client are stubbed: these tests check the scan order, statuses,
 // routing, dedup and timing of the job only (the other modules have their own tests).
 vi.mock('@/lib/teams/cards', () => ({
-  followUpCard: (v: { id: string }, o: { what: string; ref: string; kind?: string }) => ({
+  followUpCard: (v: { id: string }, o: { what: string; ref: string; kind?: string; readOnly?: boolean }) => ({
     type: 'AdaptiveCard',
     version: '1.5',
     body: [],
@@ -11,6 +11,7 @@ vi.mock('@/lib/teams/cards', () => ({
     what: o.what,
     ref: o.ref,
     kind: o.kind,
+    readOnly: o.readOnly,
   }),
   cardAttachment: (card: unknown) => ({
     type: 'message',
@@ -709,6 +710,34 @@ describe('Teams sends', () => {
     const res = await run(e)
     expect(e.connector.sent.map((s) => s.conversationId)).toEqual(['ch-esc', 'ch-esc'])
     expect(res.errors).toEqual([expect.stringMatching(/Accountant va1 \(va1\) has not opened Shadow in Teams: 1 follow-up card/)])
+  })
+
+  it("the card to the accountant's own channel is read-only (no Action.Execute); escalations to the Admins keep the buttons", async () => {
+    const e = env({ store: fakeStore({ rows: asks(1) }) })
+    await run(e)
+    expect(e.connector.sent.map((s) => [s.conversationId, s.card.kind, s.card.readOnly])).toEqual([
+      ['ch-esc', 'escalation', false],
+      ['ch-va1', 'reminder', true],
+    ])
+    // The real card for those options.
+    const real = await vi.importActual<typeof import('@/lib/teams/cards')>('@/lib/teams/cards')
+    const [view] = await viewsOf(e.store)(['r0'])
+    const types = (readOnly: boolean, kind: 'reminder' | 'escalation') =>
+      (real.followUpCard(view, { siteUrl: 'https://shadow.test', what: 'repeat', ref: followUpRef('r0', 'repeat'), kind, readOnly }).actions as { type: string }[]).map(
+        (a) => a.type,
+      )
+    expect(types(true, 'reminder')).toEqual(['Action.OpenUrl'])
+    expect(types(false, 'escalation')).toEqual(['Action.Execute', 'Action.Execute', 'Action.OpenUrl'])
+  })
+
+  it('an accountant card that falls back to Escalations keeps the buttons', async () => {
+    const map: TeamsChannelMap = { ...MAP, accountants: {} }
+    const e = env({ store: fakeStore({ rows: asks(1) }), teams: fakeTeams({ map }) })
+    await run(e)
+    expect(e.connector.sent.map((s) => [s.conversationId, s.card.kind, s.card.readOnly])).toEqual([
+      ['ch-esc', 'escalation', false],
+      ['ch-esc', 'reminder', false],
+    ])
   })
 
   it('at most 25 cards a run; a half-sent pair is finished next run', async () => {

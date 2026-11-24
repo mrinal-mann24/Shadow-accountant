@@ -504,6 +504,67 @@ describe('followUpCard', () => {
   })
 })
 
+describe('readOnly cards (sent to a Senior Accountant)', () => {
+  const onlyOpen = (c: AdaptiveCard, url: string) => {
+    expect(executes(c)).toHaveLength(0)
+    expect(actions(c)).toEqual([{ type: 'Action.OpenUrl', title: 'Open in Shadow', url }])
+    expect(json(c)).not.toContain('Action.Execute')
+  }
+
+  it('ticketCard: only Open in Shadow; without readOnly the Start, Close, Not a ticket buttons stay', () => {
+    const c = ticketCard(ticket, { siteUrl: SITE, readOnly: true })
+    onlyOpen(c, TICKET_LINK)
+    expect(textsOf(c)[0]).toBe('New ticket: Acme Traders')
+    expect(executes(ticketCard(ticket, { siteUrl: SITE, readOnly: false })).map((a) => a.title)).toEqual(['Start', 'Close', 'Not a ticket'])
+  })
+
+  it('reminderCard: only Open in Shadow; without readOnly Start and Close stay', () => {
+    const c = reminderCard(ticket, { siteUrl: SITE, waitingMinutes: 90, ref: 'r-1', readOnly: true })
+    onlyOpen(c, TICKET_LINK)
+    expect(json(c)).toContain('Client waiting 1 h 30 min (business hours)')
+    expect(executes(reminderCard(ticket, { siteUrl: SITE, waitingMinutes: 90, ref: 'r-1' })).map((a) => a.title)).toEqual(['Start', 'Close'])
+  })
+
+  it('followUpCard: only Open in Shadow for due, chase, missed and repeat; without readOnly the buttons stay', () => {
+    const cases: [FollowUpView, 'due' | 'chase' | 'missed' | 'repeat', string[]][] = [
+      [fu, 'due', ['Done', 'Not needed', 'Extend 1 day']],
+      [doc, 'chase', ['Done', 'Not needed', 'Extend 1 day']],
+      [fu, 'missed', ['Done', 'Not needed', 'Extend 1 day']],
+      [repeat, 'repeat', ['Answered', 'Not a repeat']],
+    ]
+    for (const [v, what, buttons] of cases) {
+      const ref = followUpRef('f-1', what, what === 'chase' ? 1 : 0)
+      const c = followUpCard(v, { siteUrl: SITE, what, ref, readOnly: true, now: FU_NOW })
+      onlyOpen(c, FU_LINK)
+      expect(executes(followUpCard(v, { siteUrl: SITE, what, ref, now: FU_NOW })).map((a) => a.title)).toEqual(buttons)
+    }
+  })
+
+  it('closeTicketCard: heading Close in Shadow, says to close it there, only Open in Shadow; default keeps Close', () => {
+    const c = closeTicketCard(ticket, { siteUrl: SITE, readOnly: true })
+    onlyOpen(c, TICKET_LINK)
+    expect(textsOf(c)[0]).toBe('Close in Shadow: Acme Traders')
+    expect(textsOf(c)).toContain('Open the ticket in Shadow and close it there.')
+    expect(json(c)).not.toContain('Close this ticket?')
+    expect(json(c)).not.toContain('Nothing changes until you press Close.')
+    const admin = closeTicketCard(ticket, { siteUrl: SITE, readOnly: false })
+    expect(executes(admin).map((a) => a.title)).toEqual(['Close'])
+    expect(textsOf(admin)[0]).toBe('Close this ticket? Acme Traders')
+  })
+
+  it('handled wins over readOnly: who did what, and the link', () => {
+    const h = ticketCard(ticket, { siteUrl: SITE, readOnly: true, handled: { action: 'closed', by: 'Admin', at: '2026-11-18T10:15:00Z' } })
+    onlyOpen(h, TICKET_LINK)
+    expect(json(h)).toContain('Closed by Admin')
+  })
+
+  it('the help card no longer tells everyone to use the buttons', () => {
+    const s = json(helpCard({ siteUrl: SITE }))
+    expect(s).not.toContain('Use the buttons on a card')
+    expect(s).toContain('Senior Accountants open each card in Shadow')
+  })
+})
+
 describe('parseFollowUpAction', () => {
   const ref = followUpRef('f-1', 'missed', 0)
   const invoke = (data: unknown, verb = 'followup') => ({ action: { type: 'Action.Execute', verb, data } })

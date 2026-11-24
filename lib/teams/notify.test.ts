@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 
 // Cards are stubbed so these tests check routing, dedup and timing only (cards.ts has its own tests).
+// The stubs keep readOnly, so the tests can check which cards go out with Open in Shadow only.
 vi.mock('./cards', () => ({
-  ticketCard: (t: { id: string }) => ({ type: 'AdaptiveCard', version: '1.5', body: [], kind: 'ticket', id: t.id }),
+  ticketCard: (t: { id: string }, o: { readOnly?: boolean }) => ({
+    type: 'AdaptiveCard',
+    version: '1.5',
+    body: [],
+    kind: 'ticket',
+    id: t.id,
+    readOnly: o.readOnly,
+  }),
   reminderCard: (t: { id: string }, o: { waitingMinutes: number; ref: string }) => ({
     type: 'AdaptiveCard',
     version: '1.5',
@@ -303,6 +311,7 @@ describe('runTeamsNotifyJob new tickets', () => {
       deps({ reads: fakeReads({ tickets: [ticket({ id: 't1', lastMessageDirection: 'outgoing' })] }), store: fakeStore({ map }), connector }),
     )
     expect(connector.sent.map((s) => s.conversationId)).toEqual(['ch-esc'])
+    expect(connector.sent[0].card.readOnly).toBe(false) // the Admins get the buttons
     expect(res.written).toBe(1)
     expect(res.errors).toEqual([expect.stringMatching(/Accountant Asha \(va1\) has not opened Shadow in Teams: 1 card/)])
   })
@@ -434,6 +443,51 @@ describe('runTeamsNotifyJob 1:1 chats', () => {
     expect(res.processed).toBe(0)
   })
 
+  it("cards to the accountant's own 1:1 chat or channel are read-only (no Action.Execute); a fallback to the escalation chats keeps the buttons", async () => {
+    const real = await vi.importActual<typeof import('./cards')>('./cards')
+    const executes = (c: { actions?: unknown[] }) => (c.actions ?? []).filter((a) => (a as { type: string }).type === 'Action.Execute')
+    // What the real card looks like for the options notify passed to the stub.
+    const rendered = (s: Sent, t: TicketForCard) => {
+      const readOnly = s.card.readOnly as boolean | undefined
+      return s.card.kind === 'ticket'
+        ? real.ticketCard(t, { siteUrl: 'https://shadow.test', readOnly })
+        : real.reminderCard(t, { siteUrl: 'https://shadow.test', waitingMinutes: s.card.waitingMinutes as number, ref: s.card.ref as string, readOnly })
+    }
+    const fresh = ticket({ id: 'new1', lastMessageDirection: 'outgoing' })
+
+    // Asha's 1:1 chat: new ticket and reminder are read-only; the escalation to the Admins is not built read-only.
+    const own = fakeConnector()
+    await run(deps({ reads: fakeReads({ tickets: [fresh, waiting], created }), store: fakeStore({ chats }), connector: own, resolveUser }))
+    const mine = own.sent.filter((s) => s.conversationId === 'a:asha')
+    expect(mine.map((s) => [s.card.kind, s.card.readOnly])).toEqual([
+      ['ticket', true],
+      ['reminder', true],
+    ])
+    for (const s of mine) {
+      const c = rendered(s, s.card.id === 'w1' ? waiting : fresh)
+      expect(executes(c)).toEqual([])
+      expect(c.actions).toEqual([expect.objectContaining({ type: 'Action.OpenUrl', title: 'Open in Shadow' })])
+    }
+    expect(own.sent.filter((s) => s.card.kind === 'escalation').every((s) => s.card.readOnly === undefined)).toBe(true)
+
+    // Bala has a linked channel but no 1:1 chat: still his own route, so read-only.
+    const t = ticket({ id: 'b1', clientId: 'c2', clientName: 'Beta', vaId: 'va2', vaName: 'Bala', lastMessageDirection: 'outgoing' })
+    const channel = fakeConnector()
+    await run(deps({ reads: fakeReads({ tickets: [t] }), store: fakeStore({ chats }), connector: channel, resolveUser }))
+    expect(channel.sent.map((s) => [s.conversationId, s.card.readOnly])).toEqual([['ch-va2', true]])
+    expect(executes(rendered(channel.sent[0], t))).toEqual([])
+
+    // No route of his own: the ticket card falls back to the Admins and Engineers with its buttons.
+    const fallback = fakeConnector()
+    await run(deps({ reads: fakeReads({ tickets: [t] }), store: fakeStore({ chats, map: null }), connector: fallback, resolveUser }))
+    expect(fallback.sent.map((s) => [s.conversationId, s.card.readOnly])).toEqual([
+      ['a:raghav', false],
+      ['a:priya', false],
+      ['a:eng', false],
+    ])
+    expect(executes(rendered(fallback.sent[0], t)).map((a) => (a as { title: string }).title)).toEqual(['Start', 'Close', 'Not a ticket'])
+  })
+
   it('a lookup failure skips that person with a warning and the rest still get cards', async () => {
     const connector = fakeConnector()
     const flaky = async (email: string) => {
@@ -469,7 +523,7 @@ describe('runTeamsNotifyJob waiting tickets', () => {
     const res = await run(deps({ reads: fakeReads({ tickets: [waitingTicket('2026-11-16T11:00:00')], created }), store, connector }))
     const ref = `w1@${ist('2026-11-16T11:00:00')}`
     expect(connector.sent).toEqual([
-      { conversationId: 'ch-va1', card: expect.objectContaining({ kind: 'reminder', waitingMinutes: 60, ref }) },
+      { conversationId: 'ch-va1', card: expect.objectContaining({ kind: 'reminder', waitingMinutes: 60, ref, readOnly: true }) },
     ])
     expect(store.rows.has(`reminder:${ref}`)).toBe(true)
     expect(res.written).toBe(1)

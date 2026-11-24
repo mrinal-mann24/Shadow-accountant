@@ -191,7 +191,8 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
       clientId: t.clientId,
       clientName: t.clientName,
       targets,
-      build: () => ticketCard(t, { siteUrl: site }),
+      // To the accountant's own chat or channel: Open in Shadow only. A fallback to the Admins keeps the buttons.
+      build: () => ticketCard(t, { siteUrl: site, readOnly: !!routes.accountant(t.vaId) }),
       stale: pick(staleTickets, t.id),
     })
   }
@@ -251,7 +252,7 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
           clientId: w.t.clientId,
           clientName: w.t.clientName,
           targets,
-          build: () => reminderCard(w.t, { siteUrl: site, waitingMinutes, ref: w.ref }),
+          build: () => reminderCard(w.t, { siteUrl: site, waitingMinutes, ref: w.ref, readOnly: !!routes.accountant(w.t.vaId) }),
           stale: pick(staleReminders, w.ref),
         })
       }

@@ -770,7 +770,15 @@ async function runAlerts(
           label: v.clientName,
           targets,
           // kind must equal the teams_notifications kind claimed (the card buttons record clicks on that row).
-          card: () => followUpCard(v, { siteUrl: site, what: p.what, ref: p.ref, kind: p.kind }),
+          // To the accountant's own chat or channel: Open in Shadow only. Escalations to the Admins keep the buttons.
+          card: () =>
+            followUpCard(v, {
+              siteUrl: site,
+              what: p.what,
+              ref: p.ref,
+              kind: p.kind,
+              readOnly: p.route === 'accountant' && !!routes.accountant(v.vaId),
+            }),
         },
         teamsStore,
         connector!,

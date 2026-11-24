@@ -16,7 +16,7 @@ import { followUpAction } from '@/lib/data'
 import { createFakeSupabase, type FakeTables } from '@/lib/data/testing/fake-supabase'
 import type { Database } from '@/lib/db/types'
 import { clearTeamNumbersCache } from '@/lib/team'
-import { handleActivity, REFUSAL, resetBotState, type BotDeps } from '@/lib/teams/bot'
+import { FOLLOW_UP_CLOSED, handleActivity, resetBotState, type BotDeps } from '@/lib/teams/bot'
 import type {
   Activity,
   AdaptiveCard,
@@ -42,6 +42,9 @@ const CLIENT_PHONE = '9800000001'
 
 const asha: AppUser = { id: 'u1', email: 'asha@example.com', name: 'Asha', role: 'senior_accountant', vaId: 'va1' }
 const ravi: AppUser = { id: 'u2', email: 'ravi@example.com', name: 'Ravi', role: 'senior_accountant', vaId: 'va2' }
+const admin: AppUser = { id: 'u3', email: 'admin@example.com', name: 'Admin One', role: 'admin', vaId: null }
+// Senior Accountants work in Shadow: a click from them on a follow-up card gets this and changes nothing (bot.ts).
+const USE_SHADOW = 'Please update this in Shadow: press Open in Shadow on the card.'
 
 const MAP: TeamsChannelMap = {
   serviceUrl: 'https://smba.trafficmanager.net/in/',
@@ -125,7 +128,9 @@ function scriptedModel(script: Script) {
 
 // ---------------------------------------------------------------- Teams fakes
 
-type Sent = { at: string; channel: string; card: AdaptiveCard; text: string }
+// ref: the teams_notifications ref the card was claimed for (set when its activity id is saved). Cards to the
+// accountant carry no buttons, so the ref cannot be read off the card itself.
+type Sent = { at: string; channel: string; card: AdaptiveCard; text: string; id: string; ref?: string }
 
 function fakeTeams(now: () => Date) {
   const key = (k: NotificationKind, ref: string) => `${k}:${ref}`
@@ -147,6 +152,8 @@ function fakeTeams(now: () => Date) {
     setActivityId: async (kind, ref, id) => {
       const r = rows.get(key(kind, ref))
       if (r) r.activity_id = id
+      const s = sent.find((x) => x.id === id)
+      if (s) s.ref = ref
     },
     get: async (kind, ref) => rows.get(key(kind, ref)) ?? null,
     recordAction: async () => {},
@@ -155,12 +162,13 @@ function fakeTeams(now: () => Date) {
   }
   const sent: Sent[] = []
   const updated: { channel: string; activityId: string; activity: OutgoingActivity }[] = []
-  const emails: Record<string, string> = { '29:asha': asha.email, '29:ravi': ravi.email }
+  const emails: Record<string, string> = { '29:asha': asha.email, '29:ravi': ravi.email, '29:admin': admin.email }
   const connector: TeamsConnector = {
     send: async (_url, channel, activity) => {
       const card = activity.attachments![0].content
-      sent.push({ at: now().toISOString(), channel, card, text: JSON.stringify(card) })
-      return { id: `act-${sent.length}` }
+      const id = `act-${sent.length + 1}`
+      sent.push({ at: now().toISOString(), channel, card, text: JSON.stringify(card), id })
+      return { id }
     },
     update: async (_url, channel, activityId, activity) => {
       updated.push({ channel, activityId, activity })
@@ -284,7 +292,16 @@ function world(script: Script) {
       }
     },
     /** The cards sent, as [IST time, channel, ref]. */
-    cards: () => teams.sent.map((s) => [new Date(Date.parse(s.at) + 330 * 60_000).toISOString().slice(0, 16), s.channel, refOf(s.card)]),
+    cards: () => teams.sent.map((s) => [new Date(Date.parse(s.at) + 330 * 60_000).toISOString().slice(0, 16), s.channel, s.ref ?? '(no ref)']),
+    /** Cards to the accountant's own channel are Open in Shadow only; escalations to the Admins keep the buttons. */
+    expectButtonsOnlyOnEscalations() {
+      expect(teams.sent.length).toBeGreaterThan(0)
+      for (const s of teams.sent) {
+        const types = (s.card.actions as { type: string }[]).map((a) => a.type)
+        if (s.channel === 'ch-esc') expect(types, `${s.ref} to ${s.channel}`).toContain('Action.Execute')
+        else expect(types, `${s.ref} to ${s.channel}`).toEqual(['Action.OpenUrl'])
+      }
+    },
   }
   return w
 }
@@ -293,11 +310,6 @@ function world(script: Script) {
 const dueRef = (r: FollowUpRow) => followUpRef(r.id, 'due', followUpCycle(r.due_at))
 const missedRef = (r: FollowUpRow) => followUpRef(r.id, 'missed', followUpCycle(r.due_at))
 const chaseRef = (r: FollowUpRow, k: number) => followUpRef(r.id, 'chase', followUpCycle(r.due_at) * 10 + k)
-
-function refOf(card: AdaptiveCard): string {
-  const a = (card.actions as { data?: { ref?: string } }[]).find((x) => x.data?.ref)
-  return a?.data?.ref ?? '(no ref)'
-}
 
 function invoke(fromId: string, data: FollowUpCardData, id?: string): Activity {
   return {
@@ -316,7 +328,7 @@ function invoke(fromId: string, data: FollowUpCardData, id?: string): Activity {
 
 function botDeps(w: ReturnType<typeof world>): { deps: BotDeps; runDeferred: () => Promise<void> } {
   const tasks: (() => Promise<void>)[] = []
-  const users: Record<string, AppUser> = { [asha.email]: asha, [ravi.email]: ravi }
+  const users: Record<string, AppUser> = { [asha.email]: asha, [ravi.email]: ravi, [admin.email]: admin }
   const deps: BotDeps = {
     connector: w.teams.connector,
     store: w.teams.store,
@@ -395,6 +407,7 @@ describe('a) promise: due reminder, then delivered', () => {
     await w.cron('2026-11-19T00:05:00', '2026-11-19T15:50:00')
     expect(w.cards()).toEqual([['2026-11-19T10:05', 'ch-va1', dueRef(p)]])
     expect(w.teams.sent[0].text).toContain('Promise due today: Acme Traders')
+    w.expectButtonsOnlyOnEscalations() // the due card to Asha's channel: Open in Shadow only
     expect([...w.teams.rows.keys()]).toEqual([`reminder:${dueRef(p)}`])
     expect(w.row(/MIS/)).toMatchObject({ status: 'open', reminder_count: 1, last_reminded_at: ist('2026-11-19T10:05:00') })
 
@@ -463,6 +476,7 @@ describe('b) document requests: chase, chase, chase, escalate', () => {
     expect(w.teams.sent[2].text).toContain('reminder 3')
     expect(w.teams.sent[3].text).toContain('Document still not received: Acme Traders')
     expect(w.teams.sent.every((s) => !s.text.includes('Bank statement'))).toBe(true)
+    w.expectButtonsOnlyOnEscalations() // chases to Asha: Open in Shadow only; the escalation keeps its buttons
     expect(w.row(/^CC/)).toMatchObject({ status: 'open', reminder_count: 3 })
     expect(w.row(/^CC/).escalated_at).not.toBeNull()
     expect([...w.teams.rows.keys()].sort()).toEqual(
@@ -512,6 +526,7 @@ describe('c) repeat ask', () => {
       ['2026-11-18T14:05', 'ch-va1', ref],
     ])
     expect(w.teams.sent[0].text).toContain('Client asked again: Acme Traders')
+    w.expectButtonsOnlyOnEscalations() // Answered / Not a repeat on the escalation only
     expect([...w.teams.rows.keys()]).toEqual([`escalation:${ref}`, `reminder:${ref}`])
     expect(w.row(/GST/).escalated_at).toBe(ist('2026-11-18T14:05:00'))
 
@@ -591,7 +606,7 @@ describe('e) business hours', () => {
     const p = w.row(/ledger/)
     expect(p).toMatchObject({ due_at: ist('2026-11-21T19:00:00'), status: 'missed', reminder_count: 0 })
     // No "due" reminder ever (19:05 Saturday and all of Sunday are outside 10:00 to 19:00 Mon to Sat).
-    expect(w.teams.sent.filter((s) => refOf(s.card).includes(':due:'))).toEqual([])
+    expect(w.teams.sent.filter((s) => (s.ref ?? '').includes(':due:'))).toEqual([])
     // The status turns missed at Saturday 19:05; the escalation waits for business hours (Monday 10:05).
     expect(w.cards()).toEqual([['2026-11-23T10:05', 'ch-esc', missedRef(p)]])
     expect(w.teams.sent[0].text).toContain('Promise missed: Acme Traders')
@@ -609,41 +624,78 @@ describe('e) business hours', () => {
     const p = w.row(/ledger/)
     expect(p.due_at).toBe(ist('2026-11-23T19:00:00'))
     expect(w.cards()).toEqual([['2026-11-23T10:05', 'ch-va1', dueRef(p)]])
+    w.expectButtonsOnlyOnEscalations()
   })
 })
 
 // ---------------------------------------------------------------- f) button path
 
 describe('f) card buttons', () => {
-  it('the chase card "Done" button: another accountant is refused, the client accountant closes it, no more chases', async () => {
+  it('chase cards to the accountant have no buttons; on the escalation card accountants are sent to Shadow, the admin Done closes it, nothing more is sent', async () => {
     const w = await documentScenario()
-    await w.cron('2026-11-18T15:05:00', '2026-11-21T10:05:00') // through the first chase (Saturday 10:05)
+    await w.cron('2026-11-18T15:05:00', '2026-11-28T10:05:00') // through the escalation (Saturday 28 Nov 10:05)
     const cc = w.row(/^CC/)
-    expect(w.cards()).toEqual([['2026-11-21T10:05', 'ch-va1', chaseRef(cc, 1)]])
-    const done = button(w.teams.sent[0].card, 'Done')
-    expect(done).toEqual({ action: 'done', followUpId: cc.id, kind: 'reminder', ref: chaseRef(cc, 1) })
+    expect(w.cards()).toEqual([
+      ['2026-11-21T10:05', 'ch-va1', chaseRef(cc, 1)],
+      ['2026-11-24T10:05', 'ch-va1', chaseRef(cc, 2)],
+      ['2026-11-26T10:05', 'ch-va1', chaseRef(cc, 3)],
+      ['2026-11-28T10:05', 'ch-esc', missedRef(cc)],
+    ])
+    w.expectButtonsOnlyOnEscalations()
+    const done = button(w.teams.sent[3].card, 'Done')
+    expect(done).toEqual({ action: 'done', followUpId: cc.id, kind: 'escalation', ref: missedRef(cc) })
 
-    w.clock.now = new Date(ist('2026-11-21T11:00:00'))
+    w.clock.now = new Date(ist('2026-11-28T11:00:00'))
     // lib/data directly: Ravi (another accountant) is forbidden and nothing changes.
     await expect(followUpAction(ravi, cc.id, 'done', w.clock.now)).rejects.toBeInstanceOf(ForbiddenError)
     expect(w.row(/^CC/)).toMatchObject({ status: 'open', resolved_by: null })
 
-    // The bot path with the button's own data.
+    // The bot path with the button's own data: an Admin closes it; Senior Accountants (own client or not) are sent to
+    // Shadow, also from an older chase card that still has a Done button.
     const bot = botDeps(w)
-    const refused = await handleActivity(invoke('29:ravi', done, 'click-1'), bot.deps)
-    expect((refused.body as ReplyBody).value).toBe(REFUSAL)
-    expect(w.row(/^CC/).status).toBe('open')
+    const olderChase: FollowUpCardData = { action: 'done', followUpId: cc.id, kind: 'reminder', ref: chaseRef(cc, 1) }
+    for (const [from, data, id] of [['29:ravi', done, 'click-1'], ['29:asha', done, 'click-2'], ['29:asha', olderChase, 'click-3']] as const) {
+      const r = await handleActivity(invoke(from, data, id), bot.deps)
+      expect((r.body as ReplyBody).value).toBe(USE_SHADOW)
+      expect(w.row(/^CC/)).toMatchObject({ status: 'open', resolved_by: null })
+    }
+    await bot.runDeferred()
+    expect(w.teams.updated).toEqual([])
 
-    const ok = await handleActivity(invoke('29:asha', done, 'click-2'), bot.deps)
+    const ok = await handleActivity(invoke('29:admin', done, 'click-4'), bot.deps)
     const body = ok.body as ReplyBody
     expect(body.type).toBe('application/vnd.microsoft.card.adaptive')
-    expect(JSON.stringify(body.value)).toContain('Marked done by Asha')
-    expect(w.row(/^CC/)).toMatchObject({ status: 'done', resolved_by: asha.email, resolved_at: ist('2026-11-21T11:00:00') })
+    expect(JSON.stringify(body.value)).toContain('Marked done by Admin One')
+    expect(JSON.stringify(body.value)).not.toContain('Action.Execute')
+    expect(w.row(/^CC/)).toMatchObject({ status: 'done', resolved_by: admin.email, resolved_at: ist('2026-11-28T11:00:00') })
     await bot.runDeferred()
-    expect(w.teams.updated.map((u) => [u.channel, u.activityId])).toEqual([['ch-va1', 'act-1']])
+    expect(w.teams.updated.map((u) => [u.channel, u.activityId])).toEqual([['ch-esc', 'act-4']])
 
     // A second click (another viewer) is told it is closed; the job never chases or escalates it again.
-    await expect(followUpAction(asha, cc.id, 'done', w.clock.now)).rejects.toThrow('This follow-up is already closed.')
+    const again = await handleActivity(invoke('29:admin', done, 'click-5'), bot.deps)
+    expect((again.body as ReplyBody).value).toBe(FOLLOW_UP_CLOSED)
+    await expect(followUpAction(admin, cc.id, 'done', w.clock.now)).rejects.toThrow('This follow-up is already closed.')
+    await w.cron('2026-11-28T11:05:00', '2026-12-09T19:50:00')
+    expect(w.teams.sent).toHaveLength(4)
+    expect(w.row(/^CC/)).toMatchObject({ status: 'done', reminder_count: 3 })
+  })
+
+  it('the client accountant cannot close a follow-up from Teams; closing it in Shadow (lib/data) stops the chases', async () => {
+    const w = await documentScenario()
+    await w.cron('2026-11-18T15:05:00', '2026-11-21T10:05:00') // through the first chase (Saturday 10:05)
+    const cc = w.row(/^CC/)
+    expect(w.cards()).toEqual([['2026-11-21T10:05', 'ch-va1', chaseRef(cc, 1)]])
+    expect((w.teams.sent[0].card.actions as { type: string; title: string }[]).map((a) => [a.type, a.title])).toEqual([
+      ['Action.OpenUrl', 'Open in Shadow'],
+    ])
+    w.clock.now = new Date(ist('2026-11-21T11:00:00'))
+    const bot = botDeps(w)
+    const data: FollowUpCardData = { action: 'done', followUpId: cc.id, kind: 'reminder', ref: chaseRef(cc, 1) }
+    expect((((await handleActivity(invoke('29:asha', data, 'c-1'), bot.deps)).body) as ReplyBody).value).toBe(USE_SHADOW)
+    expect(w.row(/^CC/).status).toBe('open')
+    // In Shadow (lib/data, the same function the follow-ups screen uses) Asha closes her own client's item.
+    await followUpAction(asha, cc.id, 'done', w.clock.now)
+    expect(w.row(/^CC/)).toMatchObject({ status: 'done', resolved_by: asha.email })
     await w.cron('2026-11-21T11:05:00', '2026-12-02T19:50:00')
     expect(w.teams.sent).toHaveLength(1)
     expect(w.row(/^CC/)).toMatchObject({ status: 'done', reminder_count: 1, escalated_at: null })

@@ -120,6 +120,8 @@ export const FOLLOW_UP_NOT_FOUND = 'This follow-up was not found. It may have be
 export const FOLLOW_UP_NO_EXTEND = 'Only promises and document requests can be extended.'
 
 const NOT_FOUND = 'This ticket was not found. It may have been removed.'
+/** Senior Accountants update tickets and follow-ups in Shadow; their cards carry only the Open in Shadow link. */
+const USE_SHADOW = 'Please update this in Shadow: press Open in Shadow on the card.'
 const FAILED = 'Sorry, that did not work. Please try again from Shadow.'
 const LOOKUP_FAILED = 'Sorry, I could not check your Teams account right now. Please try again.'
 
@@ -443,6 +445,8 @@ async function handleCardAction(activity: Activity, deps: BotDeps): Promise<BotR
   if (who.kind === 'unknown') return invokeMessage(NOT_SET_UP)
   if (who.kind === 'failed') return invokeMessage(LOOKUP_FAILED)
   const { user, email } = who
+  // Older cards in an accountant's chat still show Start / Close / Not a ticket: refuse those clicks.
+  if (user.role === 'senior_accountant') return invokeMessage(USE_SHADOW)
   const now = (deps.now ?? (() => new Date()))()
   const at = now.toISOString()
   const action = ACTION_DONE[data.action]
@@ -452,7 +456,7 @@ async function handleCardAction(activity: Activity, deps: BotDeps): Promise<BotR
   try {
     switch (data.action) {
       case 'start': {
-        if (user.role !== 'senior_accountant' && user.role !== 'admin') return invokeMessage(REFUSAL)
+        if (user.role !== 'admin') return invokeMessage(REFUSAL)
         const t = await deps.data.ticketForUser(user, data.ticketId)
         if (!t) return invokeMessage(REFUSAL)
         if (t.status === 'closed') return invokeMessage(ALREADY_CLOSED)
@@ -486,7 +490,7 @@ async function handleCardAction(activity: Activity, deps: BotDeps): Promise<BotR
           const ticketId = data.ticketId
           later(deps, 'reassign post', async () => {
             const t = await deps.store.ticketForCard(ticketId)
-            if (t) await deps.connector.send(dest.target.serviceUrl, dest.target.id, cardAttachment(ticketCard(t, { siteUrl: deps.siteUrl })))
+            if (t) await deps.connector.send(dest.target.serviceUrl, dest.target.id, cardAttachment(ticketCard(t, { siteUrl: deps.siteUrl, readOnly: true })))
           })
         }
         break
@@ -499,7 +503,7 @@ async function handleCardAction(activity: Activity, deps: BotDeps): Promise<BotR
         if (!dest) return invokeMessage(NO_ACCOUNTANT_CHAT)
         const acc = dest.accountant
         // Its own ref, so clicks on this reminder are not recorded on the real reminder row.
-        const card = reminderCard(t, { siteUrl: deps.siteUrl, waitingMinutes: waitingMinutes(t, now), ref: `${data.ref}#ping` })
+        const card = reminderCard(t, { siteUrl: deps.siteUrl, waitingMinutes: waitingMinutes(t, now), ref: `${data.ref}#ping`, readOnly: true })
         const out: OutgoingActivity = cardAttachment(card)
         if (dest.personal) {
           out.text = 'An Admin asked you to pick this up.'
@@ -608,6 +612,8 @@ async function handleFollowUpAction(activity: Activity, deps: BotDeps): Promise<
   if (who.kind === 'unknown') return invokeMessage(NOT_SET_UP)
   if (who.kind === 'failed') return invokeMessage(LOOKUP_FAILED)
   const { user } = who
+  // Older follow-up cards in an accountant's chat still show Done / Not needed / Extend: refuse those clicks.
+  if (user.role === 'senior_accountant') return invokeMessage(USE_SHADOW)
   const now = (deps.now ?? (() => new Date()))()
 
   let view: FollowUpView
@@ -762,7 +768,8 @@ async function closeCardFor(deps: BotDeps, user: AppUser, ticketId: string): Pro
   if (own.status === 'closed') return ALREADY_CLOSED
   const t = await deps.store.ticketForCard(ticketId)
   if (!t) return NOT_FOUND
-  return closeTicketCard(t, { siteUrl: deps.siteUrl })
+  // Senior Accountants close it in Shadow: their card has only the Open in Shadow link.
+  return closeTicketCard(t, { siteUrl: deps.siteUrl, readOnly: user.role === 'senior_accountant' })
 }
 
 // ---------------------------------------------------------------- save card clicks

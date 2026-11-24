@@ -171,14 +171,18 @@ function ticketBody(t: TicketForCard, headingText: string, extraFacts: [string, 
 
 // ---------------------------------------------------------------- cards
 
+// readOnly: the card goes to a Senior Accountant (their 1:1 chat or their channel). They update tickets and follow-ups
+// in Shadow, not from Teams, so their cards carry only the Open in Shadow link. Admins keep the buttons.
+
 /**
  * New ticket card, posted to the accountant's channel. Once handled it is headed "Ticket:", since it also replaces the
  * 1:1 Close card (closeTicketCard) after its click.
  */
-export function ticketCard(t: TicketForCard, o: { siteUrl: string; handled?: CardHandled }): AdaptiveCard {
+export function ticketCard(t: TicketForCard, o: { siteUrl: string; handled?: CardHandled; readOnly?: boolean }): AdaptiveCard {
   const body = ticketBody(t, `${o.handled ? 'Ticket' : 'New ticket'}: ${safe(t.clientName, 120)}`)
   const open = openUrl('Open in Shadow', ticketUrl(o.siteUrl, t.clientId, t.id))
   if (o.handled) return card([...body, ...handledBlocks(o.handled)], [open])
+  if (o.readOnly) return card(body, [open])
   return card(body, [
     execute('Start', 'start', t, 'ticket', t.id, { style: 'positive' }),
     execute('Close', 'close', t, 'ticket', t.id),
@@ -191,19 +195,22 @@ export function ticketCard(t: TicketForCard, o: { siteUrl: string; handled?: Car
  * Sent in the 1:1 chat when someone types that a ticket should be closed: the ticket, a Close button and a link.
  * The click is the ordinary ticket Close (same checks, and the ticket card in the accountant channel is updated too).
  */
-export function closeTicketCard(t: TicketForCard, o: { siteUrl: string }): AdaptiveCard {
+export function closeTicketCard(t: TicketForCard, o: { siteUrl: string; readOnly?: boolean }): AdaptiveCard {
+  const open = openUrl('Open in Shadow', ticketUrl(o.siteUrl, t.clientId, t.id))
+  if (o.readOnly) {
+    const body = ticketBody(t, `Close in Shadow: ${safe(t.clientName, 120)}`)
+    body.push(text('Open the ticket in Shadow and close it there.', { isSubtle: true }))
+    return card(body, [open])
+  }
   const body = ticketBody(t, `Close this ticket? ${safe(t.clientName, 120)}`)
   body.push(text('Nothing changes until you press Close.', { isSubtle: true }))
-  return card(body, [
-    execute('Close', 'close', t, 'ticket', t.id, { style: 'positive' }),
-    openUrl('Open in Shadow', ticketUrl(o.siteUrl, t.clientId, t.id)),
-  ])
+  return card(body, [execute('Close', 'close', t, 'ticket', t.id, { style: 'positive' }), open])
 }
 
 /** Reminder when the client has been waiting for a reply (business hours). */
 export function reminderCard(
   t: TicketForCard,
-  o: { siteUrl: string; waitingMinutes: number; ref: string; handled?: CardHandled },
+  o: { siteUrl: string; waitingMinutes: number; ref: string; handled?: CardHandled; readOnly?: boolean },
 ): AdaptiveCard {
   const body = ticketBody(t, `Client waiting ${formatWaiting(o.waitingMinutes)} (business hours)`, [
     ['Client', safe(t.clientName, 120)],
@@ -211,6 +218,7 @@ export function reminderCard(
   ])
   const open = openUrl('Open in Shadow', ticketUrl(o.siteUrl, t.clientId, t.id))
   if (o.handled) return card([...body, ...handledBlocks(o.handled)], [open])
+  if (o.readOnly) return card(body, [open])
   return card(body, [
     execute('Start', 'start', t, 'reminder', o.ref, { style: 'positive' }),
     execute('Close', 'close', t, 'reminder', o.ref),
@@ -303,15 +311,15 @@ export function helpCard(o: { siteUrl: string }): AdaptiveCard {
       heading('Shadow Accountant in Teams'),
       text(
         'I send you everything here, in this chat: new tickets, reminders when a client is waiting, client files and ' +
-          'follow-ups for your clients (Senior Accountants), and escalations (Admins). Use the buttons on a card to ' +
-          'start, close or reassign a ticket.',
+          'follow-ups for your clients (Senior Accountants), and escalations (Admins). Senior Accountants open each ' +
+          'card in Shadow to work on it; Admins can also reassign, ping or close from the card.',
       ),
       text('In this chat', { weight: 'Bolder', spacing: 'Medium' }),
       facts([
         ['Ask', 'Anything about your clients, for example "open tickets for Puneeth\'s clients". Answers come with sources.'],
         ['General', 'Accounting, GST or Tally questions, or help drafting a message.'],
         ['Save', 'Paste a call transcript or meeting notes and say "save this for <client>". Press Save on the card to store it.'],
-        ['Close', 'Say "close the GST ticket for <client>". Press Close on the card to close it.'],
+        ['Close', 'Say "close the GST ticket for <client>". I show the ticket with a link to close it in Shadow (Admins can press Close on the card).'],
         ['new chat', 'Forget our earlier messages and start fresh'],
         ['help', 'Show this card'],
       ]),
@@ -426,6 +434,7 @@ export function followUpCard(
     kind?: 'reminder' | 'escalation'
     handled?: FollowUpHandled
     now?: Date
+    readOnly?: boolean
   },
 ): AdaptiveCard {
   const kind = o.kind ?? (o.what === 'missed' || o.what === 'repeat' ? 'escalation' : 'reminder')
@@ -457,6 +466,7 @@ export function followUpCard(
     if (h.note) body.push(text(safe(h.note, 300), { isSubtle: true }))
     return card(body, [open])
   }
+  if (o.readOnly) return card(body, [open])
   const button = (title: string, action: FollowUpAction, extra: Record<string, unknown> = {}) => {
     const data: FollowUpCardData = { action, followUpId: v.id, kind, ref: o.ref }
     return { type: 'Action.Execute', title, verb: FOLLOW_UP_VERB, data, ...extra }
