@@ -17,7 +17,8 @@ Decide exactly one of:
 
 Rules:
 - target_conversation_id must be copied exactly from the ids given in the context, or be null. Never invent an id.
-- Prefer "continue" over "new" when an open ticket is about the same topic.
+- Prefer "continue" over "new" when an open ticket is about the same topic, except for a full new set of document details (next rule).
+- A message that gives a full new set of details for a document we must prepare (a sale invoice, bill, credit note or entry: party, vehicle, weight or quantity, rate or amount) is a "new" request, even when the party, vehicle or item matches an open ticket: every delivery or trip needs its own invoice, and the same vehicle can make several trips. Choose "continue" on the open ticket only when the client says the new details correct the earlier ones ("revise", "correct", "change", "wrong", "instead of", "not X but Y"), or when the message only chases or adds to the earlier request without a new set of details ("please make sale invoice", "any update on bill").
 - Only "close" when resolution is clear. A plain "thanks" is no_action, not close.
 - Before choosing "close", check every item in the ticket's title and summary. If only some are done (for example GSTR-3B filed but GSTR-1 still to verify), choose "continue" and say in the summary what is done and what is still pending.
 - A message from our team that answers, updates or completes the client's request is "continue" or "close" on that ticket, never "no_action". This is how we know the client got a reply.
