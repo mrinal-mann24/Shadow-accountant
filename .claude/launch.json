@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "goal-board",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "D:\\Mrinal.Manna\\OneDrive - KOREFI BUSINESS SOLUTIONS PRIVATE LIMITED\\Desktop\\Goal Board", "run", "dev", "--", "--port", "5173", "--strictPort"],
+      "port": 5173
     }
   ]
 }

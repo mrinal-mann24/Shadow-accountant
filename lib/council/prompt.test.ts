@@ -60,4 +60,12 @@ describe('buildCouncilPrompt', () => {
     expect(COUNCIL_SYSTEM_PROMPT).toMatch(/same vehicle can make several trips/)
     expect(COUNCIL_SYSTEM_PROMPT).toMatch(/only when the client says the new details correct the earlier ones/)
   })
+
+  // AJ Metalware, 25 Nov 2026: the party name arrived 10 seconds after the details and the summary said the client
+  // "provided the missing party name", which read as a change to yesterday's invoice on the same vehicle.
+  it('system prompt asks for the party in the title and a whole-request summary, not "missing" details', () => {
+    expect(COUNCIL_SYSTEM_PROMPT).toMatch(/put the party name in the title once it is known/)
+    expect(COUNCIL_SYSTEM_PROMPT).toMatch(/Write the summary as the whole request in one go/)
+    expect(COUNCIL_SYSTEM_PROMPT).toMatch(/Do not describe a detail sent seconds later as "missing"/)
+  })
 })

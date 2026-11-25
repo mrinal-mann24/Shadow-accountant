@@ -14,7 +14,9 @@ import { buildCouncilPrompt } from '@/lib/council/prompt'
 import type { CouncilContext, ContextMessage, Decision } from '@/lib/council/types'
 import { askModel, withOneRetry } from '@/lib/council/vote'
 
-type Case = { name: string; ctx: CouncilContext; expect: Decision; target?: string }
+/** Optional wording check on the title and summary of the vote that supplies them. Returns a problem, or null. */
+type WordingCheck = (title: string, summary: string) => string | null
+type Case = { name: string; ctx: CouncilContext; expect: Decision; target?: string; wording?: WordingCheck }
 
 const msg = (id: string, at: string, direction: 'incoming' | 'outgoing', body: string): ContextMessage => ({
   id,
@@ -45,6 +47,14 @@ const T2 = {
   title: 'Sale invoice for Jai Maa Jhandewali, 1876.7 kg at Rs 180/kg',
   summary: 'Client asked for a sale invoice to Jai Maa Jhandewali: vehicle DL01LQ9409, 1876.7 kg at Rs 180/kg. Team said they will share it in some time.',
   last_message_at: REPLY.at,
+}
+// 25 Nov: today's trip on yesterday's vehicle, sent without a party name; it opened t3.
+const TODAY = msg('m5', '2026-11-25T03:51:56Z', 'incoming', 'Vechile no   DL01LQ9409\n\n\nWeight   1896.400\n\nRate  180/- per kgs\n\ns.s utensils m    item name\n\n73239390  hsn code')
+const T3 = {
+  id: 't3',
+  title: 'Sale invoice for 1896.4 kg at Rs 180/kg, vehicle DL01LQ9409',
+  summary: 'Client sent sale invoice details: vehicle DL01LQ9409, 1896.4 kg at Rs 180/kg, SS utensils, HSN 73239390.',
+  last_message_at: TODAY.at,
 }
 const base = (message: ContextMessage): CouncilContext => ({
   clientName: 'Metal Traders',
@@ -95,6 +105,25 @@ const CASES: Case[] = [
     ctx: base(msg('n6', '2026-11-24T11:05:00Z', 'incoming', 'ok thanks')),
     expect: 'no_action',
   },
+  {
+    // AJ Metalware, 25 Nov 2026: details at 9:21:56 opened t3, the party name followed 10 seconds later. The summary said
+    // the client "provided the missing party name", which read as a change to yesterday's invoice on the same vehicle (t2).
+    name: 'invoice: party name 10 seconds after the details -> continue t3, party in title, no "missing"',
+    ctx: {
+      clientName: 'Metal Traders',
+      message: msg('n7', '2026-11-25T03:52:06Z', 'incoming', 'Make sale invoice name of Eiffel kitchen ware'),
+      recent: [OTHER, REPLY, TODAY],
+      open: [T2, T3],
+      recentlyClosed: [],
+    },
+    expect: 'continue',
+    target: 't3',
+    wording: (title, summary) => {
+      if (!/eiffel/i.test(title)) return `title has no party name: "${title}"`
+      if (/missing|provided later|later provided|correct|revis/i.test(summary)) return `summary reads like a change: "${summary}"`
+      return null
+    },
+  },
 ]
 
 async function main(): Promise<void> {
@@ -107,11 +136,16 @@ async function main(): Promise<void> {
     const prompt = buildCouncilPrompt(c.ctx)
     const [ra, rb] = await Promise.all([withOneRetry(() => askModel('A', prompt)), withOneRetry(() => askModel('B', prompt))])
     const final = combineVotes(validateVote(ra.vote, c.ctx), validateVote(rb.vote, c.ctx))
-    const ok = final.decision === c.expect && (!c.target || final.targetConversationId === c.target)
+    const decisionOk = final.decision === c.expect && (!c.target || final.targetConversationId === c.target)
+    const shown = final.source === 'A' ? ra.vote : final.source === 'B' ? rb.vote : null
+    const wordingProblem = c.wording && shown ? c.wording(shown.title, shown.summary) : null
+    const ok = decisionOk && !wordingProblem
     if (ok) pass++
     console.log(`${ok ? 'PASS' : 'FAIL'} ${c.name}`)
     console.log(`     A ${ra.model}: ${ra.vote.decision} ${ra.vote.target_conversation_id ?? ''} | B ${rb.model}: ${rb.vote.decision} ${rb.vote.target_conversation_id ?? ''} | final ${final.decision} ${final.targetConversationId ?? ''}`)
-    if (!ok) console.log(`     A: ${ra.vote.reasoning}\n     B: ${rb.vote.reasoning}`)
+    if (c.wording && shown) console.log(`     title: ${shown.title}\n     summary: ${shown.summary}`)
+    if (wordingProblem) console.log(`     wording: ${wordingProblem}`)
+    if (!decisionOk) console.log(`     A: ${ra.vote.reasoning}\n     B: ${rb.vote.reasoning}`)
   }
   console.log(`\n${pass}/${cases.length} passed`)
   if (pass !== cases.length) process.exit(1)
