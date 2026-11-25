@@ -124,6 +124,33 @@ const CASES: Case[] = [
       return null
     },
   },
+  {
+    // Forelife, 25 Nov 2026 (names changed): our team sent the signed PDF with no caption. va-bot now stores it as
+    // "[File shared: <name>]"; before, nothing was stored and the ticket stayed "pending".
+    name: 'document: our caption-less PDF delivers the promised file -> close t4, times in IST',
+    ctx: {
+      clientName: 'Health Systems',
+      message: msg('n8', '2026-11-25T07:30:00Z', 'outgoing', '[File shared: ICICI letter Signed.pdf]'),
+      recent: [
+        msg('m6', '2026-11-25T06:45:19Z', 'outgoing', 'I will affix your DSC and share it with you in 30 minutes.'),
+        msg('m7', '2026-11-25T06:45:30Z', 'incoming', 'thanks. it also needs to be in our letterhead format'),
+        msg('m8', '2026-11-25T06:45:33Z', 'incoming', 'share pdf.'),
+        msg('m9', '2026-11-25T06:45:42Z', 'outgoing', 'ok sir'),
+      ],
+      open: [
+        {
+          id: 't4',
+          title: 'DSC-signed ICICI letter on letterhead as PDF',
+          summary: 'Client asked for the ICICI letter with their DSC affixed, on their letterhead, as a PDF. Our team promised it within 30 minutes.',
+          last_message_at: '2026-11-25T06:45:42Z',
+        },
+      ],
+      recentlyClosed: [],
+    },
+    expect: 'close',
+    target: 't4',
+    wording: (_title, summary) => (/\b0?6:45\b|\bUTC\b/i.test(summary) ? `summary quotes a UTC time: "${summary}"` : null),
+  },
 ]
 
 async function main(): Promise<void> {

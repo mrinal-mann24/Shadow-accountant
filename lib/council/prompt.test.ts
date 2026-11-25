@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { sanitiseBody } from '@/lib/ai/sanitise'
-import { buildCouncilPrompt, COUNCIL_SYSTEM_PROMPT } from './prompt'
+import { buildCouncilPrompt, COUNCIL_SYSTEM_PROMPT, istTime } from './prompt'
 import type { CouncilContext } from './types'
 
 const ctx: CouncilContext = {
@@ -59,6 +59,25 @@ describe('buildCouncilPrompt', () => {
     expect(COUNCIL_SYSTEM_PROMPT).toMatch(/full new set of details for a document we must prepare/)
     expect(COUNCIL_SYSTEM_PROMPT).toMatch(/same vehicle can make several trips/)
     expect(COUNCIL_SYSTEM_PROMPT).toMatch(/only when the client says the new details correct the earlier ones/)
+  })
+
+  // Forelife, 25 Nov 2026: a 12:15 pm IST promise showed as "06:45" because the model was given UTC times.
+  it('shows message and ticket times in IST, never raw UTC', () => {
+    expect(istTime('2026-11-25T06:45:19Z')).toMatch(/^25 Nov 2026, 12:15 pm IST$/i)
+    expect(istTime(null)).toBe('unknown')
+    expect(istTime('not a date')).toBe('not a date')
+    const p = buildCouncilPrompt({
+      clientName: 'Forelife',
+      message: { id: 'm1', at: '2026-11-25T06:45:19Z', sender: 'Team', direction: 'outgoing', body: 'I will share it in 30 minutes.' },
+      recent: [],
+      open: [{ id: 't1', title: 'KYC', summary: 's', last_message_at: '2026-11-25T07:49:55Z' }],
+      recentlyClosed: [],
+    })
+    expect(p).toMatch(/at="25 Nov 2026, 12:15 pm IST"/i)
+    expect(p).toMatch(/last message: 25 Nov 2026, 1:19 pm IST/i)
+    expect(p).not.toMatch(/06:45|T06|Z"/)
+    expect(COUNCIL_SYSTEM_PROMPT).toMatch(/All times in the context are India time \(IST\)/)
+    expect(COUNCIL_SYSTEM_PROMPT).toMatch(/\[File shared: <name>\]/)
   })
 
   // AJ Metalware, 25 Nov 2026: the party name arrived 10 seconds after the details and the summary said the client
