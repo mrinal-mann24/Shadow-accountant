@@ -11,11 +11,22 @@ Business answers received 25 Nov 2026 (see "Decisions"). Still open items are ma
   | Intern | Clients (Shadow name / WhatsApp group) |
   | --- | --- |
   | Smriti | Down The Rabbit Hole, Ragnayor (`Nalin`), Healthy Chef (`Piyush`), BridgeLine Partners (`SA PREM NARAYAN`) |
-  | Radha | Nirved Medicals, Anantha Enterprises **[NEED: not found in Shadow]**, He Spoke (`Prem Sah`) |
+  | Radha | Nirved Medicals and Anantha Enterprises (two entities, one WhatsApp group: `Nirved Medicals<>VA`), He Spoke (`Prem Sah`) |
   | Praveen | Wander Cafe, Amore Jayanagar |
   | Praveen and Nishi (shared) | Zam Steel (`Azam <> AIA`) |
 
-  Ajith's interns: to follow.
+- **Interns under Ajith, by client** (received 25 Nov 2026; subgroups go with their parent client):
+
+  | Intern | Clients (Shadow name / WhatsApp group) |
+  | --- | --- |
+  | Noorain | Horizon Marketing (+5 subgroups), Nyvu (`Nyutech[Kiran]_AiA_2026`, +16 subgroups), BTS Enterprise <> VA (`BTS Enterprise`, added 25 Nov 2026) |
+  | Sofiya | Tinidots and Ankur (one WhatsApp group: `Tinidots <> Virtual Accounting`, Shadow name `Sanjib`), Indofolks: Ayurpet <> VA (`Ayurpet`) with subgroup IndoFolk Wellness <> Annual Filing (added 25 Nov 2026), Noel George: Leon Enterprises |
+  | Paras | Adroidex (`Debu Seth`), Erathem Curios |
+  | Elina | Leapmile Logistics (+1 subgroup), Navekadashi (`Navaekadhasi Enterprises`, +13 subgroups), Interiors by Apricus Homes |
+
+  KRRD: Ajith himself for now, an intern later (moved from Harshit to Ajith in Shadow on 25 Nov 2026).
+  Data check: in these groups (last 14 days) the number ending 3697 sent 93 of 125 team replies across 6 groups,
+  so it looks like Ajith's office number, the same pattern as Puneeth's **[NEED: confirm]**.
 - **Interns reply from Puneeth's office number**, not their own phones. So a reply is credited to a person by
   **client**, not by number: a reply from the office number in a client's group belongs to that client's intern(s).
   Data check: in these 9 groups (last 14 days) the office number ending 8606 sent 145 of 192 team replies, across
@@ -196,6 +207,7 @@ Shadow cannot see calls. V1 checks only what is written in the group:
 ## Build order (one step at a time, each verified before the next)
 
 1. Settings `team_members` and `office_hours`, read by `lib/team` and `business-time.ts`. Tests.
+   (`team_members` row created on 25 Nov 2026: 8 interns, 20 clients plus 36 subgroups, 2 office numbers.)
 2. Response-time rule: 30 / 60 office minutes, alerts to the senior accountant. Tests, dry-run on a week of data.
 3. Red flag and missed-ETA alerts to the senior accountant. Tests, dry-run.
 4. ETA check prompt and eval script (30 labelled replies, real models). Stop if under 90%.
@@ -212,8 +224,13 @@ Shadow cannot see calls. V1 checks only what is written in the group:
 
 ## [NEED] still open
 
-1. Ajith's interns and their clients.
-2. Anantha Enterprises (Radha): no matching client in Shadow. Is it a group we have not added, or another name?
+1. Ajith's interns: received. BTS Enterprise <> VA must be added to Shadow as a client; IndoFolk Wellness <>
+   Annual Filing needs a Periskope number in the group; is Ankur part of Tinidots? Confirm the number ending 3697
+   is Ajith's office number.
+2. Anantha Enterprises: answered, it talks in the Nirved group. Leapmile: the main group has been silent since
+   17 Nov (our number's last send there was refused); the work happens in the subgroup "Leapmile - Korefi -
+   Accounting Group" (in Shadow, active). A third group "Leapmile - Payroll & Accounts Group" is in Periskope but
+   not Shadow, last message 1 Sep 2026.
 3. Confirm the office number ending 8606 is Puneeth's office number the interns use.
 4. The company number ending 9596 is saved in `vas` as Prathiba's number, and it also sent 31 replies in 6 of the
    intern groups. Who uses it?

@@ -17,10 +17,10 @@ export function PageHeader({
   action?: React.ReactNode
 }) {
   return (
-    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div className="anim-rise mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
+        <h1 className="text-[30px] leading-tight font-semibold tracking-[-0.03em] md:text-[34px]">{title}</h1>
+        {description && <p className="mt-1.5 text-[15px] text-muted-foreground">{description}</p>}
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>
@@ -39,46 +39,85 @@ export function Section({
   children: React.ReactNode
 }) {
   return (
-    <Card className={cn('gap-4 py-4', className)}>
-      <CardHeader className="flex flex-row items-center justify-between gap-2 px-4">
-        <CardTitle className="text-base">{title}</CardTitle>
+    <Card className={cn('anim-rise gap-4 py-5', className)}>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 px-5">
+        <CardTitle className="text-[17px] tracking-[-0.01em]">{title}</CardTitle>
         {action}
       </CardHeader>
-      <CardContent className="px-4">{children}</CardContent>
+      <CardContent className="px-5">{children}</CardContent>
     </Card>
   )
 }
 
-export function KpiCard({ label, value, hint, alert }: { label: string; value: React.ReactNode; hint?: string; alert?: boolean }) {
-  return (
-    <Card className="gap-1 px-4 py-4">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={cn('text-2xl font-semibold tabular-nums', alert && 'text-destructive')}>{value}</p>
+/** A headline number. `href` makes the whole card a link; `alert` turns the number red with a live pulse. */
+export function KpiCard({
+  label,
+  value,
+  hint,
+  alert,
+  href,
+  className,
+}: {
+  label: string
+  value: React.ReactNode
+  hint?: string
+  alert?: boolean
+  href?: string
+  className?: string
+}) {
+  const body = (
+    <>
+      <p className="text-[13px] text-muted-foreground">{label}</p>
+      <p className="flex items-center gap-2.5">
+        <span className={cn('font-mono text-[32px] leading-none font-medium tracking-[-0.02em] tabular-nums', alert && 'text-destructive')}>
+          {value}
+        </span>
+        {alert && <span className="live-red size-2.5 rounded-full bg-destructive" aria-hidden />}
+      </p>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-    </Card>
+    </>
+  )
+  const cls = cn('anim-rise lift flex flex-col gap-2.5 rounded-2xl border bg-card p-[18px]', className)
+  return href ? (
+    <a href={href} className={cls}>
+      {body}
+    </a>
+  ) : (
+    <div className={cls}>{body}</div>
   )
 }
 
 export function EmptyState({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">{children}</p>
+  return (
+    <p className="rounded-xl border border-dashed bg-card/60 px-4 py-8 text-center text-sm text-muted-foreground">{children}</p>
+  )
 }
 
 const TAG_CLASSES: Record<string, string> = {
-  escalation: 'bg-destructive/10 text-destructive',
-  complaint: 'bg-warning/10 text-warning',
-  positive: 'bg-success/10 text-success',
-  neutral: 'bg-secondary text-muted-foreground',
-  suspense: 'bg-primary/10 text-primary',
+  escalation: 'bg-warning-soft text-[#8A4205]',
+  complaint: 'bg-destructive-soft text-destructive',
+  positive: 'bg-success-soft text-success',
+  neutral: 'bg-primary-soft text-accent-foreground',
+  suspense: 'bg-violet-soft text-violet',
 }
 
 export function TagBadge({ tag }: { tag: string | null }) {
   if (!tag) return <Badge variant="outline">No tag</Badge>
   const label = isTag(tag) ? TAG_LABELS[tag] : tag
-  return <Badge variant="secondary" className={TAG_CLASSES[tag] ?? 'bg-secondary text-muted-foreground'}>{label}</Badge>
+  return (
+    <Badge variant="secondary" className={cn('rounded-md font-medium', TAG_CLASSES[tag] ?? 'bg-secondary text-muted-foreground')}>
+      {label}
+    </Badge>
+  )
 }
 
 export function SlaBadge() {
-  return <Badge variant="secondary" className="bg-destructive text-white">SLA breached</Badge>
+  return (
+    <Badge variant="secondary" className="gap-1.5 rounded-md bg-destructive-soft font-medium text-destructive">
+      <span className="live-red size-1.5 rounded-full bg-destructive" aria-hidden />
+      SLA breached
+    </Badge>
+  )
 }
 
 export function StatusBadge({ status }: { status: string }) {

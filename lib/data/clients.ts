@@ -8,8 +8,8 @@ import { assertCanMutate, canAccessClient, isInvalidInput, scopeOf, type Db } fr
 import type { ClientDetail, ClientListItem, ContactItem, VaItem } from './types'
 
 const CLIENT_COLS =
-  'client_id, client_name, legal_name, status, deal_stage, va_id, whatsapp_group_name, council_enabled, parent_client_id'
-const CLIENT_DETAIL_COLS = `${CLIENT_COLS}, email, gstin, entity_type, industry, city, state, onboarding_date, hubspot_deal_id, whatsapp_group_id`
+  'client_id, client_name, legal_name, status, deal_stage, va_id, whatsapp_group_name, council_enabled, parent_client_id, hubspot_deal_id'
+const CLIENT_DETAIL_COLS = `${CLIENT_COLS}, email, gstin, entity_type, industry, city, state, onboarding_date, whatsapp_group_id`
 const SCORE_COLS =
   'client_id, va_id, service_score, mood_score, service_delta, mood_delta, open_issues, complaints_7d, our_fault_7d, unanswered_count, worst_lag_minutes, top_reasons, computed_at, last_message_at'
 
@@ -24,6 +24,7 @@ type ClientBase = Pick<
   | 'whatsapp_group_name'
   | 'council_enabled'
   | 'parent_client_id'
+  | 'hubspot_deal_id'
 >
 type ScoreRow = Pick<
   Row<'client_scores'>,
@@ -140,6 +141,7 @@ function toListItem(
     whatsappGroupName: c.whatsapp_group_name,
     councilEnabled: c.council_enabled,
     parentClientId: c.parent_client_id,
+    hubspotDealId: c.hubspot_deal_id,
     serviceScore: score?.service_score ?? null,
     moodScore: score?.mood_score ?? null,
     serviceDelta: score?.service_delta ?? null,

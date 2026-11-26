@@ -9,6 +9,7 @@ import { useActionState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { FollowUpAction, FollowUpKind, FollowUpView } from '@/lib/followups/types'
+import { cn } from '@/lib/utils'
 import { formatDateTime } from './logic'
 import { EmptyState } from './ui'
 
@@ -71,6 +72,44 @@ export function dueTone(dueAt: string | null | undefined, now: Date): DueTone {
 /** dueTone, with a missed item always in the overdue tone. */
 export function followUpDueTone(f: Pick<FollowUpView, 'status' | 'dueAt'>, now: Date): DueTone {
   return f.status === 'missed' ? 'overdue' : dueTone(f.dueAt, now)
+}
+
+/** "42 m", "1 h 42 m", "3 h", "2 d" (at least 1 m). */
+function formatSpan(minutes: number): string {
+  const m = Math.max(1, Math.round(minutes))
+  if (m < 60) return `${m} m`
+  if (m < 1440) {
+    const h = Math.floor(m / 60)
+    const rest = m % 60
+    return rest > 0 ? `${h} h ${rest} m` : `${h} h`
+  }
+  return `${Math.floor(m / 1440)} d`
+}
+
+/** "2:10 pm" when the time is today in IST, else "21 Nov". Empty for a bad date. */
+function istClockOrDate(iso: string | null | undefined, now: Date): string {
+  const at = iso ? Date.parse(iso) : NaN
+  if (Number.isNaN(at)) return ''
+  if (istDay(at) !== istDay(now.getTime())) return shortIstDate(at, now)
+  return new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true }).format(
+    new Date(at),
+  )
+}
+
+export type FollowUpClock = { text: string; caption: string; tone: DueTone }
+
+/**
+ * The right-hand time on a Home follow-up row: "1 h 42 m" overdue (or missed), "in 48 m" due later today,
+ * "28 Nov" due on a later day. Undated items (repeat asks) show when the client asked: "2:10 pm" asked.
+ */
+export function followUpClock(f: Pick<FollowUpView, 'status' | 'dueAt' | 'sourceAt'>, now: Date): FollowUpClock {
+  const tone = followUpDueTone(f, now)
+  const due = f.dueAt ? Date.parse(f.dueAt) : NaN
+  if (Number.isNaN(due)) return { text: istClockOrDate(f.sourceAt, now), caption: 'asked', tone }
+  const diff = (due - now.getTime()) / 60_000
+  if (diff <= 0) return { text: formatSpan(-diff), caption: f.status === 'missed' ? 'missed' : 'overdue', tone }
+  if (istDay(due) === istDay(now.getTime())) return { text: `in ${formatSpan(diff)}`, caption: 'due', tone }
+  return { text: shortIstDate(due, now), caption: 'due', tone }
 }
 
 /**
@@ -162,8 +201,8 @@ export type FollowUpActionState = { ok: boolean; error: string | null }
 type Action = (prev: FollowUpActionState, formData: FormData) => Promise<FollowUpActionState>
 
 const TONE_CLASSES: Record<DueTone, string> = {
-  overdue: 'bg-destructive/10 text-destructive',
-  today: 'bg-warning/10 text-warning',
+  overdue: 'bg-destructive-soft text-destructive',
+  today: 'bg-warning-soft text-[#8A4205]',
   later: 'bg-secondary text-muted-foreground',
   none: 'bg-secondary text-muted-foreground',
 }
@@ -354,19 +393,58 @@ export function FollowUpsDueList({ items, nowIso }: { items: FollowUpView[] | nu
   if (items.length === 0) return <EmptyState>Nothing due today.</EmptyState>
   const now = new Date(nowIso)
   return (
-    <ul className="divide-y text-sm">
-      {items.map((f) => (
-        <li key={f.id} className="flex flex-col gap-1 py-2 first:pt-0 last:pb-0">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Link href={`/clients/${encodeURIComponent(f.clientId)}#follow-ups`} className="min-w-0 truncate font-medium hover:underline">
-              {f.clientName}
+    <ul className="-mx-5 divide-y divide-line-soft border-t border-line-soft">
+      {items.map((f, i) => {
+        const clock = followUpClock(f, now)
+        return (
+          <li key={f.id} className={cn('anim-rise', DELAYS[Math.min(i, DELAYS.length - 1)])}>
+            <Link
+              href={`/clients/${encodeURIComponent(f.clientId)}#follow-ups`}
+              title={followUpDueLabel(f, now)}
+              className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-3.5 px-5 py-3.5 transition-colors hover:bg-[#F8F9FB]"
+            >
+              <span className={cn('size-2.5 rounded-full', DOT_CLASSES[clock.tone], clock.tone === 'overdue' && 'live-red')} aria-hidden />
+              <div className="flex min-w-0 flex-col gap-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <strong className="text-sm font-semibold">{f.clientName}</strong>
+                  <span className={cn('rounded-md px-2 py-0.5 text-xs', PILL_CLASSES[clock.tone])}>
+                    {f.status === 'missed' ? `${kindLabel(f.kind)} missed` : kindLabel(f.kind)}
+                  </span>
+                  {f.sourceSender && <span className="text-xs text-muted-foreground">{f.sourceSender}</span>}
+                </div>
+                <span className="truncate text-[13px] text-muted-foreground">{f.item}</span>
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                <span className={cn('font-mono text-[13px] whitespace-nowrap tabular-nums', CLOCK_CLASSES[clock.tone])}>{clock.text}</span>
+                <span className="text-xs text-muted-foreground">{clock.caption}</span>
+              </div>
             </Link>
-            {f.dueAt && <DueBadge dueAt={f.dueAt} now={now} />}
-          </div>
-          <p className="wrap-break-word">{f.item}</p>
-          <p className="text-xs text-muted-foreground">{kindLabel(f.kind)}</p>
-        </li>
-      ))}
+          </li>
+        )
+      })}
     </ul>
   )
+}
+
+const DELAYS = ['anim-d1', 'anim-d2', 'anim-d3', 'anim-d4', 'anim-d5', 'anim-d6', 'anim-d7', 'anim-d8']
+
+const DOT_CLASSES: Record<DueTone, string> = {
+  overdue: 'bg-destructive',
+  today: 'bg-warning',
+  later: 'bg-border',
+  none: 'bg-border',
+}
+
+const PILL_CLASSES: Record<DueTone, string> = {
+  overdue: 'bg-destructive-soft text-destructive',
+  today: 'bg-warning-soft text-[#8A4205]',
+  later: 'bg-secondary text-muted-foreground',
+  none: 'bg-secondary text-muted-foreground',
+}
+
+const CLOCK_CLASSES: Record<DueTone, string> = {
+  overdue: 'text-destructive',
+  today: 'text-[#8A4205]',
+  later: 'text-muted-foreground',
+  none: 'text-muted-foreground',
 }

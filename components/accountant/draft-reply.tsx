@@ -7,10 +7,24 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import type { DraftReply, DraftReplyResult } from '@/lib/reply/types'
+import { cn } from '@/lib/utils'
 
 type Action = (ticketId: string) => Promise<DraftReplyResult>
 
-export function DraftReplyButton({ ticketId, title, action }: { ticketId: string; title: string; action: Action }) {
+export function DraftReplyButton({
+  ticketId,
+  title,
+  action,
+  size = 'sm',
+  className,
+}: {
+  ticketId: string
+  title: string
+  action: Action
+  /** 'lg' matches the primary button in the Tickets side panel. */
+  size?: 'sm' | 'lg'
+  className?: string
+}) {
   const [open, setOpen] = useState(false)
   const [pending, startTransition] = useTransition()
   const [draft, setDraft] = useState<DraftReply | null>(null)
@@ -52,7 +66,9 @@ export function DraftReplyButton({ ticketId, title, action }: { ticketId: string
       <Button
         type="button"
         variant="outline"
-        size="sm"
+        size={size}
+        className={cn('press', size === 'lg' && 'h-11 rounded-xl px-4 text-[14px]', className)}
+        aria-haspopup="dialog"
         onClick={() => {
           setOpen(true)
           if (!draft && !pending) run()
@@ -61,7 +77,7 @@ export function DraftReplyButton({ ticketId, title, action }: { ticketId: string
         Draft reply
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg rounded-2xl">
           <DialogHeader>
             <DialogTitle>Draft reply</DialogTitle>
             <DialogDescription className="wrap-break-word">
@@ -69,7 +85,16 @@ export function DraftReplyButton({ ticketId, title, action }: { ticketId: string
             </DialogDescription>
           </DialogHeader>
 
-          {pending && <p className="text-sm text-muted-foreground">Writing a draft...</p>}
+          {pending && (
+            <p role="status" className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              Writing a draft
+              <span className="flex gap-0.5" aria-hidden>
+                <span className="anim-typing size-1 rounded-full bg-muted-foreground" />
+                <span className="anim-typing anim-d2 size-1 rounded-full bg-muted-foreground" />
+                <span className="anim-typing anim-d4 size-1 rounded-full bg-muted-foreground" />
+              </span>
+            </p>
+          )}
 
           {!pending && error && (
             <p role="alert" className="text-sm text-destructive">
@@ -80,7 +105,7 @@ export function DraftReplyButton({ ticketId, title, action }: { ticketId: string
           {!pending && draft && (
             <div className="flex flex-col gap-3">
               {(draft.confidence === 'low' || draft.warnings.length > 0) && (
-                <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
+                <div className="anim-drop rounded-xl border border-warning/40 bg-warning-soft p-3 text-sm text-[#8A4205]">
                   <p className="font-medium">Check before sending</p>
                   <ul className="mt-1 list-disc pl-5">
                     {draft.confidence === 'low' && draft.warnings.length === 0 && <li>The AI is not sure about this draft.</li>}
@@ -99,10 +124,16 @@ export function DraftReplyButton({ ticketId, title, action }: { ticketId: string
               <label htmlFor={`draft-${ticketId}`} className="sr-only">
                 Reply text
               </label>
-              <Textarea id={`draft-${ticketId}`} value={text} onChange={(e) => {
+              <Textarea
+                id={`draft-${ticketId}`}
+                value={text}
+                onChange={(e) => {
                   setText(e.target.value)
                   setCopied(false)
-                }} rows={6} />
+                }}
+                rows={6}
+                className="rounded-xl"
+              />
               {draft.sources.length > 0 && (
                 <div className="text-xs text-muted-foreground">
                   <p className="font-medium text-foreground">Based on</p>
@@ -110,7 +141,7 @@ export function DraftReplyButton({ ticketId, title, action }: { ticketId: string
                     {draft.sources.map((s) => (
                       <li key={`${s.kind}-${s.id}`}>
                         {s.link ? (
-                          <Link href={s.link} className="hover:underline">
+                          <Link href={s.link} className="text-primary hover:underline">
                             {s.label}
                           </Link>
                         ) : (
@@ -129,7 +160,7 @@ export function DraftReplyButton({ ticketId, title, action }: { ticketId: string
               {draft || error ? 'Try again' : 'Draft'}
             </Button>
             {draft && (
-              <Button type="button" size="sm" onClick={copy} disabled={pending || !text.trim()}>
+              <Button type="button" size="sm" className="press" onClick={copy} disabled={pending || !text.trim()}>
                 {copied ? 'Copied' : 'Copy reply'}
               </Button>
             )}

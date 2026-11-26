@@ -14,7 +14,7 @@ export function PageSkeleton({ kpis = false }: { kpis?: boolean }) {
           ))}
         </div>
       )}
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <div className="flex flex-col gap-3">
           {Array.from({ length: 5 }, (_, i) => (
             <Skeleton key={i} className="h-16" />

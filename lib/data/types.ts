@@ -18,6 +18,8 @@ export type ClientListItem = {
   whatsappGroupName: string | null
   councilEnabled: boolean
   parentClientId: string | null
+  /** clients.hubspot_deal_id. Set by listClients and getClient; optional so hand-built fixtures stay valid. */
+  hubspotDealId?: string | null
   /** From client_scores; null until the health score job has scored the client. */
   serviceScore: number | null
   moodScore: number | null

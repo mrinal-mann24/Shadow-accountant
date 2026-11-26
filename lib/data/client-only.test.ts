@@ -71,6 +71,6 @@ describe('client page shows only what the client sent', () => {
 describe('Suspense tag', () => {
   it('is a valid ticket tag with a label', () => {
     expect(TAGS).toContain('suspense')
-    expect(TAG_LABELS.suspense).toBe('Suspense')
+    expect(TAG_LABELS.suspense).toBe('Suspense entry')
   })
 })

@@ -1,20 +1,24 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { ArrowLeft, Sparkles } from 'lucide-react'
+import { CalendarDays, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { ActivityFeed } from '@/components/accountant/activity-feed'
 import { BucketControl } from '@/components/accountant/bucket-control'
 import { FilesGrid } from '@/components/accountant/files-grid'
 import { ScrollToHash } from '@/components/accountant/scroll-to-hash'
 import { FollowUpsPanel } from '@/components/accountant/follow-ups'
 import { ticketReadOnlyNote, formatDate, formatDateTime, safeHref } from '@/components/accountant/logic'
 import { TicketList } from '@/components/accountant/ticket-list'
-import { EmptyState, HealthValue, PageHeader, ScoreTrend, Section } from '@/components/accountant/ui'
+import { EmptyState, HealthValue, ScoreTrend, Section } from '@/components/accountant/ui'
+import { ChatPanel } from '@/components/chat/chat-panel'
+import { ClientHeader } from '@/components/client360/client-header'
+import { businessName } from '@/components/client360/name'
+import { TimelineCard, type GroupChip } from '@/components/client360/timeline'
 import { requireUser } from '@/lib/auth/session'
 import type { AppUser } from '@/lib/auth/types'
 import { getClientBucket } from '@/lib/buckets'
-import { getClient, getScoreHistory, getTimeline, listConversations, listDocuments, listFollowUps, listMeetings, parentFolderName } from '@/lib/data'
+import { getClient, getScoreHistory, getTimeline, listClients, listConversations, listDocuments, listFollowUps, listMeetings, parentFolderName } from '@/lib/data'
+import type { ClientDetail, ClientListItem } from '@/lib/data/types'
 import type { FollowUpView } from '@/lib/followups/types'
 import { followUpFormAction } from './follow-up-actions'
 
@@ -22,6 +26,8 @@ export const metadata: Metadata = { title: 'Client' }
 export const dynamic = 'force-dynamic'
 // The Draft reply server action runs on this page: one AI call, 45 s timeout.
 export const maxDuration = 60
+
+const TIMELINE_LIMIT = 100
 
 /** Open follow-ups plus recent closed ones. Fails soft (null) while the follow_ups table is not there yet. */
 async function loadFollowUps(user: AppUser, clientId: string): Promise<FollowUpView[] | null> {
@@ -36,6 +42,27 @@ async function loadFollowUps(user: AppUser, clientId: string): Promise<FollowUpV
   } catch (e) {
     console.error('[client] follow-ups load failed', e)
     return null
+  }
+}
+
+/**
+ * The WhatsApp groups around this client that the user can see: the main group first, then its sub-groups.
+ * Each group is its own client (clients.parent_client_id), so the chips link to the group's own page.
+ */
+function groupFamily(client: ClientDetail, visible: ClientListItem[]) {
+  const rootId = client.parentClientId ?? client.id
+  const root = rootId === client.id ? client : (visible.find((c) => c.id === rootId) ?? null)
+  const children = visible.filter((c) => c.parentClientId === rootId).sort((a, b) => a.name.localeCompare(b.name))
+  const chips: GroupChip[] = []
+  if (root) chips.push({ id: root.id, label: 'Main group', current: root.id === client.id })
+  for (const c of children) {
+    chips.push({ id: c.id, label: businessName(c.whatsappGroupName, c.name), current: c.id === client.id })
+  }
+  if (!chips.some((g) => g.current)) chips.push({ id: client.id, label: businessName(client.whatsappGroupName, client.name), current: true })
+  return {
+    chips,
+    count: root ? 1 + children.length : 0,
+    parent: client.parentClientId && root ? { id: root.id, name: businessName(root.whatsappGroupName, root.name) } : null,
   }
 }
 
@@ -54,22 +81,30 @@ export default async function ClientPage({
   const client = await getClient(user, id)
   if (!client) notFound()
 
-  const [history, tickets, documents, meetings, timeline, bucket, followUps, parent] = await Promise.all([
+  const [history, tickets, documents, meetings, timeline, bucket, followUps, parent, visibleClients] = await Promise.all([
     getScoreHistory(user, id, 30),
     listConversations(user, { clientId: id }),
     listDocuments(user, id, { clientOnly: true }),
     listMeetings(user, id),
-    getTimeline(user, id, { limit: 100, clientOnly: true }),
+    getTimeline(user, id, { limit: TIMELINE_LIMIT, clientOnly: true }),
     getClientBucket(id),
     loadFollowUps(user, id),
     // A sub-group's files sit inside its parent's folder; only the folder name is read, whoever the parent's accountant is.
     client.parentClientId ? parentFolderName(user, client.id).catch(() => null) : Promise.resolve(null),
+    // Only for the group chips: the parent and sub-groups this user can see. Fails soft to no chips.
+    listClients(user, { status: 'all' }).catch((e: unknown) => {
+      console.error('[client] group list load failed', e)
+      return [] as ClientListItem[]
+    }),
   ])
   const parentFolder = parent
   const now = new Date()
   const openTickets = tickets.filter((t) => t.status === 'open')
   const closedTickets = tickets.filter((t) => t.status !== 'open')
   const readOnlyNote = ticketReadOnlyNote(user)
+  const name = businessName(client.whatsappGroupName, client.name)
+  const dealName = client.name.trim().toLowerCase() !== name.toLowerCase() ? client.name : null
+  const family = groupFamily(client, visibleClients)
 
   const profile: [string, string | null][] = [
     ['Legal name', client.legalName],
@@ -85,66 +120,46 @@ export default async function ClientPage({
   ]
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="mx-auto flex max-w-[1240px] min-w-0 flex-col gap-5">
       <ScrollToHash />
-      <Link href="/clients" className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="size-4" aria-hidden />
-        All clients
-      </Link>
-      <PageHeader
-        title={client.name}
-        description={
-          <>
-            Accountant: <span className="text-foreground">{client.vaName ?? 'Unassigned'}</span>
-            {' · '}
-            {openTickets.length} open {openTickets.length === 1 ? 'ticket' : 'tickets'}
-          </>
-        }
+      <nav aria-label="Breadcrumb" className="anim-rise flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
+        <Link href="/clients" className="text-primary hover:text-primary-hover">
+          Clients
+        </Link>
+        <span aria-hidden>/</span>
+        <span aria-current="page" className="min-w-0 truncate">
+          {name}
+        </span>
+      </nav>
+
+      <ClientHeader
+        name={name}
+        dealName={dealName}
+        dealStage={client.dealStage}
+        accountant={client.vaName}
+        groupCount={family.count}
+        parent={family.parent}
+        score={client.serviceScore}
+        reason={client.topReasons[0] ?? null}
+        openTickets={openTickets.length}
+        unanswered={client.unansweredCount}
         action={
-          <Button asChild>
+          <Button asChild className="press h-[42px] rounded-xl px-4 shadow-[0_8px_20px_-10px_rgba(49,77,208,0.7)]">
             <Link href={`/ask?client=${encodeURIComponent(client.id)}`}>
               <Sparkles aria-hidden />
-              Ask AI about this client
+              Ask Shadow about this client
             </Link>
           </Button>
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <div className="flex min-w-0 flex-col gap-6">
-          <Section title="Health">
-            {client.serviceScore === null ? (
-              <EmptyState>Not scored yet. Scores appear after the daily health score run.</EmptyState>
-            ) : (
-              <div className="flex flex-col gap-4">
-                <div className="flex flex-wrap gap-8">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Service</p>
-                    <HealthValue score={client.serviceScore} delta={client.serviceDelta} className="text-2xl" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Mood</p>
-                    <HealthValue score={client.moodScore} delta={client.moodDelta} className="text-2xl" />
-                  </div>
-                  <ScoreTrend service={history.map((h) => h.serviceScore)} mood={history.map((h) => h.moodScore)} />
-                </div>
-                {client.topReasons.length > 0 && (
-                  <div>
-                    <p className="mb-1 text-xs text-muted-foreground">Top reasons</p>
-                    <ul className="list-disc space-y-0.5 pl-5 text-sm">
-                      {client.topReasons.map((r) => (
-                        <li key={r}>{r}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {client.scoreComputedAt && (
-                  <p className="text-xs text-muted-foreground">Last scored {formatDateTime(client.scoreComputedAt)}.</p>
-                )}
-              </div>
-            )}
-          </Section>
+      <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
+        <TimelineCard items={timeline} now={now} groupLabel={name} groups={family.chips} limit={TIMELINE_LIMIT} />
+        <ChatPanel fixedClient={{ id: client.id, name }} />
+      </div>
 
+      <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
+        <div className="flex min-w-0 flex-col gap-4">
           <Section title={`Open tickets (${openTickets.length})`}>
             <TicketList tickets={openTickets} now={now} showClient={false} readOnlyNote={readOnlyNote} emptyText="No open tickets." />
           </Section>
@@ -166,7 +181,7 @@ export default async function ClientPage({
               {closedTickets.length > 10 && (
                 <p className="mt-3 text-xs text-muted-foreground">
                   Showing the latest 10.{' '}
-                  <Link href="/tickets?status=closed" className="underline">
+                  <Link href="/tickets?status=closed" className="text-primary hover:text-primary-hover">
                     See all closed tickets
                   </Link>
                 </p>
@@ -184,20 +199,48 @@ export default async function ClientPage({
               />
             </Section>
           </div>
-
-          <Section title="Timeline">
-            <ActivityFeed items={timeline} now={now} showClient={false} anchors emptyText="No messages, files, meetings or tickets yet." />
-            {timeline.length >= 100 && <p className="mt-3 text-xs text-muted-foreground">Showing the latest 100 items.</p>}
-          </Section>
         </div>
 
-        <div className="flex min-w-0 flex-col gap-6">
+        <div className="flex min-w-0 flex-col gap-4">
+          <Section title="Health">
+            {client.serviceScore === null ? (
+              <EmptyState>Not scored yet. Scores appear after the daily health score run.</EmptyState>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-wrap gap-8">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Service</p>
+                    <HealthValue score={client.serviceScore} delta={client.serviceDelta} className="font-mono text-2xl" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Mood</p>
+                    <HealthValue score={client.moodScore} delta={client.moodDelta} className="font-mono text-2xl" />
+                  </div>
+                  <ScoreTrend service={history.map((h) => h.serviceScore)} mood={history.map((h) => h.moodScore)} />
+                </div>
+                {client.topReasons.length > 0 && (
+                  <div>
+                    <p className="mb-1 text-xs text-muted-foreground">Top reasons</p>
+                    <ul className="list-disc space-y-0.5 pl-5 text-sm">
+                      {client.topReasons.map((r) => (
+                        <li key={r}>{r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {client.scoreComputedAt && (
+                  <p className="text-xs text-muted-foreground">Last scored {formatDateTime(client.scoreComputedAt)}.</p>
+                )}
+              </div>
+            )}
+          </Section>
+
           <Section title="Profile">
-            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
               {profile.map(([label, value]) => (
                 <div key={label} className="contents">
                   <dt className="text-muted-foreground">{label}</dt>
-                  <dd className="wrap-break-word">{value || <span className="text-muted-foreground">Not set</span>}</dd>
+                  <dd className="wrap-break-word">{value || <span className="text-meta">Not set</span>}</dd>
                 </div>
               ))}
             </dl>
@@ -211,16 +254,16 @@ export default async function ClientPage({
             {client.contacts.length === 0 ? (
               <EmptyState>No contacts saved.</EmptyState>
             ) : (
-              <ul className="divide-y text-sm">
+              <ul className="divide-y divide-line-soft text-sm">
                 {client.contacts.map((c) => (
-                  <li key={c.id} className="py-2 first:pt-0 last:pb-0">
-                    <p className="font-medium">
+                  <li key={c.id} className="py-2.5 first:pt-0 last:pb-0">
+                    <p className="flex flex-wrap items-center gap-2 font-medium">
                       {c.name ?? 'Unnamed'}
-                      {c.isPrimary && <span className="ml-2 text-xs font-normal text-muted-foreground">Primary</span>}
+                      {c.isPrimary && (
+                        <span className="rounded-md bg-primary-soft px-1.5 py-0.5 text-[11px] font-medium text-accent-foreground">Primary</span>
+                      )}
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      {[c.role, c.whatsappNumber].filter(Boolean).join(' · ')}
-                    </p>
+                    <p className="text-xs text-muted-foreground">{[c.role, c.whatsappNumber].filter(Boolean).join(' · ')}</p>
                   </li>
                 ))}
               </ul>
@@ -231,30 +274,35 @@ export default async function ClientPage({
             {meetings.length === 0 ? (
               <EmptyState>No meetings recorded.</EmptyState>
             ) : (
-              <ul className="divide-y text-sm">
+              <ul className="divide-y divide-line-soft text-sm">
                 {meetings.slice(0, 10).map((m) => {
                   const href = safeHref(m.link)
                   return (
-                    <li key={m.id} className="py-2 first:pt-0 last:pb-0">
-                      <p className="font-medium wrap-break-word">
-                        {href ? (
-                          <a href={href} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                            {m.subject ?? 'Meeting'}
-                          </a>
-                        ) : (
-                          (m.subject ?? 'Meeting')
-                        )}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {[
-                          formatDateTime(m.start ?? m.date),
-                          m.durationMinutes ? `${m.durationMinutes} min` : null,
-                          m.pocName,
-                          m.hasTranscript ? 'Transcript available' : 'No transcript',
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </p>
+                    <li key={m.id} className="flex gap-3 py-2.5 first:pt-0 last:pb-0">
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-teal-soft text-teal" aria-hidden>
+                        <CalendarDays className="size-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="font-medium wrap-break-word">
+                          {href ? (
+                            <a href={href} target="_blank" rel="noopener noreferrer" className="text-foreground hover:underline">
+                              {m.subject ?? 'Meeting'}
+                            </a>
+                          ) : (
+                            (m.subject ?? 'Meeting')
+                          )}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {[
+                            formatDateTime(m.start ?? m.date),
+                            m.durationMinutes ? `${m.durationMinutes} min` : null,
+                            m.pocName,
+                            m.hasTranscript ? 'Transcript available' : 'No transcript',
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </p>
+                      </div>
                     </li>
                   )
                 })}

@@ -4,7 +4,7 @@ import { PageHeader } from '@/components/accountant/ui'
 import { requireUser } from '@/lib/auth/session'
 import { listClients } from '@/lib/data'
 
-export const metadata: Metadata = { title: 'Ask AI' }
+export const metadata: Metadata = { title: 'Ask Shadow' }
 export const dynamic = 'force-dynamic'
 
 export default async function AskPage({ searchParams }: { searchParams: Promise<{ client?: string | string[] }> }) {
@@ -17,7 +17,7 @@ export default async function AskPage({ searchParams }: { searchParams: Promise<
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader
-        title="Ask AI"
+        title="Ask Shadow"
         description="Answers come only from your clients' messages, tickets, files and meetings, with a source for every point."
       />
       {options.length === 0 ? (

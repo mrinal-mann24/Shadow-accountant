@@ -47,7 +47,9 @@ Role in `app_metadata.role`; accountant mapping is login email = `vas.email`.
 ## Writing conventions
 
 - Indian English. No em dashes in UI copy or docs.
-- Brand: white / black / grey `#666666`, accent `#314DD0` for the one primary action, Helvetica Neue.
+- Brand (redesign v1, 26 Nov 2026): white cards on a `#F6F7F9` canvas, ink `#0B0D12`, grey `#666666` for meta,
+  accent `#314DD0` for the one primary action. Geist for text, Geist Mono for numbers (next/font), Helvetica Neue as
+  fallback. Tokens and motion utilities live in `app/globals.css`; motion must respect reduced motion.
 - Every AI answer about a client cites its source (message + time, SharePoint link, meeting + minute). If not found, say so.
 
 ## How we work (every non-trivial task)

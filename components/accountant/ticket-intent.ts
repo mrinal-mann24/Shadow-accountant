@@ -11,9 +11,9 @@ export type TicketIntent =
 export const TAG_LABELS: Record<Tag, string> = {
   escalation: 'Escalation',
   complaint: 'Complaint',
-  neutral: 'Neutral',
-  positive: 'Positive',
-  suspense: 'Suspense',
+  neutral: 'Request or question',
+  positive: 'Praise',
+  suspense: 'Suspense entry',
 }
 
 export function isTag(v: unknown): v is Tag {

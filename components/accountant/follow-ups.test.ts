@@ -6,6 +6,7 @@ import {
   closedLabel,
   dueLabel,
   dueTone,
+  followUpClock,
   followUpDueLabel,
   followUpDueTone,
   groupFollowUps,
@@ -169,5 +170,31 @@ describe('closedLabel', () => {
     expect(closedLabel({ kind: 'document', status: 'cancelled' })).toBe('Not needed')
     expect(closedLabel({ kind: 'repeat_ask', status: 'done' })).toBe('Answered')
     expect(closedLabel({ kind: 'repeat_ask', status: 'cancelled' })).toBe('Not a repeat')
+  })
+})
+
+describe('followUpClock', () => {
+  // NOW is 18 Nov 2026, 11:30 am IST
+  it('shows how late an overdue or missed item is', () => {
+    expect(followUpClock(fu({ dueAt: '2026-11-18T04:18:00Z' }), NOW)).toEqual({ text: '1 h 42 m', caption: 'overdue', tone: 'overdue' })
+    expect(followUpClock(fu({ status: 'missed', dueAt: '2026-11-16T06:00:00Z' }), NOW)).toEqual({
+      text: '2 d',
+      caption: 'missed',
+      tone: 'overdue',
+    })
+  })
+
+  it('counts down to a time later today, and shows the date for a later day', () => {
+    expect(followUpClock(fu({ dueAt: '2026-11-18T06:48:00Z' }), NOW)).toEqual({ text: 'in 48 m', caption: 'due', tone: 'today' })
+    expect(followUpClock(fu({ dueAt: '2026-11-20T06:00:00Z' }), NOW)).toEqual({ text: '20 Nov', caption: 'due', tone: 'later' })
+  })
+
+  it('shows when an undated item was asked', () => {
+    expect(followUpClock(fu({ kind: 'repeat_ask', sourceAt: '2026-11-18T03:40:00Z' }), NOW)).toEqual({
+      text: '9:10 am',
+      caption: 'asked',
+      tone: 'none',
+    })
+    expect(followUpClock(fu({ kind: 'repeat_ask', sourceAt: '2026-11-10T00:00:00Z' }), NOW).text).toBe('10 Nov')
   })
 })

@@ -7,7 +7,7 @@ const ACCOUNTANT: NavItem[] = [
   { href: '/home', label: 'Home', icon: 'home' },
   { href: '/clients', label: 'Clients', icon: 'clients' },
   { href: '/tickets', label: 'Tickets', icon: 'tickets' },
-  { href: '/ask', label: 'Ask AI', icon: 'ask' },
+  { href: '/ask', label: 'Ask Shadow', icon: 'ask' },
 ]
 const TEAM: NavItem = { href: '/admin', label: 'Team', icon: 'team' }
 const ASSIGNMENT: NavItem = { href: '/admin/assignment', label: 'Assignment', icon: 'assignment' }

@@ -6,8 +6,17 @@ export function BucketControl({ bucket }: { bucket: string | null }) {
   const current = BUCKETS.find((b) => b.key === bucket)
   return (
     <div className="flex flex-col gap-3 text-sm">
-      <p>
-        Current bucket: <span className="font-medium">{current?.label ?? bucket ?? NO_BUCKET_LABEL}</span>
+      <p className="flex flex-wrap items-center gap-2">
+        <span className="text-muted-foreground">Current bucket</span>
+        <span
+          className={
+            current || bucket
+              ? 'rounded-full bg-primary-soft px-2.5 py-0.5 text-xs font-medium text-accent-foreground'
+              : 'rounded-full bg-secondary px-2.5 py-0.5 text-xs text-muted-foreground'
+          }
+        >
+          {current?.label ?? bucket ?? NO_BUCKET_LABEL}
+        </span>
       </p>
       <div className="flex items-center gap-3">
         <button

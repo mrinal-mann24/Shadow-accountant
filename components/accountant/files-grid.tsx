@@ -79,15 +79,18 @@ export function FilesGrid({
           </thead>
           <tbody>
             {grid.rows.map((r) => (
-              <tr key={r.category} className="border-t">
+              <tr key={r.category} className="border-t border-line-soft">
                 <th scope="row" className="py-1.5 pr-2 text-left font-normal">
                   {FILE_CATEGORY_LABELS[r.category]}
                 </th>
                 {r.counts.map((n, i) => (
                   <td key={grid.months[i].key} className="px-1 py-1.5 text-center tabular-nums">
                     {n > 0 ? (
-                      <span className="inline-flex items-center gap-0.5 text-success" title={`${n} files`}>
-                        <Check className="size-3.5" aria-hidden />
+                      <span
+                        className="inline-flex items-center gap-0.5 rounded-md bg-success-soft px-1.5 py-0.5 font-mono text-xs text-success"
+                        title={`${n} files`}
+                      >
+                        <Check className="size-3" aria-hidden />
                         {n}
                       </span>
                     ) : (
@@ -109,19 +112,19 @@ export function FilesGrid({
       {recent.length > 0 && (
         <div>
           <p className="mb-1 text-xs text-muted-foreground">Latest files</p>
-          <ul className="space-y-1 text-sm">
+          <ul className="divide-y divide-line-soft text-sm">
             {recent.map((d) => (
               <li
                 key={d.id}
                 id={`file-${d.id}`}
                 aria-current={d.id === focusId ? 'true' : undefined}
-                className={`flex scroll-mt-20 flex-wrap items-center justify-between gap-x-3 gap-y-1 ${
+                className={`flex scroll-mt-20 flex-wrap items-center justify-between gap-x-3 gap-y-1 py-1.5 ${
                   d.id === focusId ? '-mx-2 rounded-md bg-primary/10 px-2 py-1 ring-1 ring-primary/40' : ''
                 }`}
               >
                 <span className="min-w-0 flex-1 break-all">{d.fileName ?? d.path}</span>
                 <span className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">{formatDateTime(d.uploadedAt)}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{formatDateTime(d.uploadedAt)}</span>
                   {neo && d.fileName && <FileActions file={neoFile(neo, d)} />}
                 </span>
               </li>

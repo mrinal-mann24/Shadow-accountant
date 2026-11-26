@@ -6,18 +6,18 @@ const base: AppUser = { id: '1', email: 'a@x.com', name: 'A', role: 'senior_acco
 const labels = (u: AppUser) => navForUser(u).map((i) => i.label)
 
 describe('navForUser', () => {
-  it('senior accountant: Home, Clients, Tickets, Ask AI', () => {
-    expect(labels(base)).toEqual(['Home', 'Clients', 'Tickets', 'Ask AI'])
+  it('senior accountant: Home, Clients, Tickets, Ask Shadow', () => {
+    expect(labels(base)).toEqual(['Home', 'Clients', 'Tickets', 'Ask Shadow'])
   })
   it('admin adds Team, Assignment and Users and roles', () => {
-    expect(labels({ ...base, role: 'admin' })).toEqual(['Home', 'Clients', 'Tickets', 'Ask AI', 'Team', 'Assignment', 'Users and roles'])
+    expect(labels({ ...base, role: 'admin' })).toEqual(['Home', 'Clients', 'Tickets', 'Ask Shadow', 'Team', 'Assignment', 'Users and roles'])
   })
   it('engineer adds Team and System', () => {
-    expect(labels({ ...base, role: 'engineer' })).toEqual(['Home', 'Clients', 'Tickets', 'Ask AI', 'Team', 'System'])
+    expect(labels({ ...base, role: 'engineer' })).toEqual(['Home', 'Clients', 'Tickets', 'Ask Shadow', 'Team', 'System'])
   })
   it('engineer viewing as an accountant gets the accountant nav', () => {
     const viewing: AppUser = { ...base, role: 'senior_accountant', viewingAs: { vaId: 'va-1', name: 'P' } }
-    expect(labels(viewing)).toEqual(['Home', 'Clients', 'Tickets', 'Ask AI'])
+    expect(labels(viewing)).toEqual(['Home', 'Clients', 'Tickets', 'Ask Shadow'])
   })
 })
 

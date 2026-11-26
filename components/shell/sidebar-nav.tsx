@@ -19,7 +19,7 @@ const ICONS: Record<NavItem['icon'], LucideIcon> = {
 export function SidebarNav({ items, orientation = 'vertical' }: { items: NavItem[]; orientation?: 'vertical' | 'horizontal' }) {
   const pathname = usePathname()
   return (
-    <nav aria-label="Main" className={cn('flex gap-1', orientation === 'vertical' ? 'flex-col' : 'overflow-x-auto')}>
+    <nav aria-label="Main" className={cn('flex gap-0.5', orientation === 'vertical' ? 'flex-col' : 'overflow-x-auto')}>
       {items.map((item) => {
         const Icon = ICONS[item.icon]
         const active = isActive(pathname, item.href, items)
@@ -29,11 +29,13 @@ export function SidebarNav({ items, orientation = 'vertical' }: { items: NavItem
             href={item.href}
             aria-current={active ? 'page' : undefined}
             className={cn(
-              'flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-sm whitespace-nowrap transition-colors',
-              active ? 'bg-secondary font-medium text-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+              'flex h-10 shrink-0 items-center gap-2.5 rounded-[10px] px-2.5 text-sm whitespace-nowrap transition-colors duration-200',
+              active
+                ? 'bg-primary-soft font-medium text-accent-foreground'
+                : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
             )}
           >
-            <Icon className="size-4" aria-hidden />
+            <Icon className="size-[17px]" aria-hidden />
             {item.label}
           </Link>
         )
