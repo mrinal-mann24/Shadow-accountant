@@ -1,7 +1,7 @@
 import { LogOut, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AppUser } from "@/lib/auth/types";
-import { ShadowMark } from "./shadow-mark";
+import { ShadowWordmark } from "./shadow-mark";
 import { ViewAsSelector } from "./view-as-selector";
 
 export function TopBar({
@@ -16,9 +16,8 @@ export function TopBar({
 }) {
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b bg-card/85 px-4 backdrop-blur supports-[backdrop-filter]:bg-card/70 md:px-8">
-      <span className="flex items-center gap-2 md:hidden">
-        <ShadowMark className="size-7" />
-        <span className="font-semibold tracking-tight">Shadow</span>
+      <span className="md:hidden">
+        <ShadowWordmark markClassName="size-7" textClassName="text-sm" />
       </span>
       {/* Searches clients by name or WhatsApp group (the Clients page's own search). */}
       <form action="/clients" method="get" role="search" className="hidden max-w-sm flex-1 sm:block">

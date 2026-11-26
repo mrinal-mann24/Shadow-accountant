@@ -8,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ShadowMark } from "@/components/shell/shadow-mark";
 import { getAuthState, loadVas } from "@/lib/auth/session";
 import { devLoginEmail, safeNextPath } from "@/lib/auth/roles";
 import { devLogin, signInWithMicrosoft } from "./actions";
@@ -53,6 +54,7 @@ export default async function LoginPage({
     <main className="flex min-h-svh items-center justify-center bg-background p-6">
       <Card className="w-full max-w-sm">
         <CardHeader>
+          <ShadowMark className="mb-2 size-11" />
           <CardTitle className="text-xl">Shadow Accountant</CardTitle>
           <CardDescription>
             Sign in with your AI Accountant Microsoft account.

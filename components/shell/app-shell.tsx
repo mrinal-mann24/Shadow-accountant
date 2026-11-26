@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ROLE_LABELS, type AppUser } from "@/lib/auth/types";
 import { navForUser } from "./nav";
-import { ShadowMark } from "./shadow-mark";
+import { ShadowWordmark } from "./shadow-mark";
 import { SidebarNav } from "./sidebar-nav";
 import { TopBar } from "./top-bar";
 import { ViewAsBanner } from "./view-as-banner";
@@ -30,9 +30,8 @@ export function AppShell({
   return (
     <div className="flex min-h-svh bg-canvas text-foreground">
       <aside className="sticky top-0 hidden h-svh w-[248px] shrink-0 flex-col gap-5 border-r bg-card px-3.5 py-5 md:flex">
-        <Link href="/home" className="flex items-center gap-2.5 px-2 py-1">
-          <ShadowMark />
-          <span className="text-[15px] font-semibold tracking-tight">Shadow</span>
+        <Link href="/home" aria-label="Shadow Accountant home" className="px-2 py-1">
+          <ShadowWordmark />
         </Link>
         <SidebarNav items={items} />
         <div className="mt-auto flex items-center gap-2.5 rounded-xl border p-2.5">
