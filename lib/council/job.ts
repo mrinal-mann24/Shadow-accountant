@@ -20,6 +20,9 @@ import type { ContextMessage, CouncilContext, FinalDecision, Vote } from './type
 import { askModel, withOneRetry, type ModelVote, type VoteFn } from './vote'
 
 export const RECENT_MESSAGES = 15
+/** The same person's next lines within this window are shown with a message (a link, then "for bank statements"). */
+export const FOLLOWING_WINDOW_MS = 2 * 60_000
+export const FOLLOWING_MESSAGES = 3
 export const CLOSED_WINDOW_DAYS = 7
 const DEFAULT_MAX_ATTEMPTS = 3
 export const DEFAULT_LIMIT = 25
@@ -219,14 +222,16 @@ export async function runCouncilJob(
     result.processed++
     try {
       const closedSince = new Date(now().getTime() - CLOSED_WINDOW_DAYS * 86_400_000).toISOString()
-      const [recent, convs] = await Promise.all([
+      const [recent, following, convs] = await Promise.all([
         store.recentMessages(m, RECENT_MESSAGES),
+        store.followingMessages(m, FOLLOWING_WINDOW_MS, FOLLOWING_MESSAGES),
         store.conversations(m.client_id, closedSince),
       ])
       const ctx: CouncilContext = {
         clientName: client.client_name,
         message: toContextMessage(m, team),
         recent: recent.map((r) => toContextMessage(r, team)),
+        following: following.map((r) => toContextMessage(r, team)),
         open: convs.open,
         recentlyClosed: convs.recentlyClosed,
       }

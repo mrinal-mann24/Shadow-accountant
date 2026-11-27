@@ -58,6 +58,11 @@ export type CouncilContext = {
   message: ContextMessage
   /** Up to 15 earlier messages in the same group, oldest first. */
   recent: ContextMessage[]
+  /**
+   * Messages the same person sent within a couple of minutes after the new one, oldest first. Context only: they
+   * explain the new message (a Drive link, then "for bank statements"); each is decided on its own turn.
+   */
+  following?: ContextMessage[]
   open: ContextConversation[]
   /** Closed in the last 7 days. */
   recentlyClosed: (ContextConversation & { closed_at: string | null })[]

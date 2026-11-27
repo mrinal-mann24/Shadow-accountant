@@ -102,6 +102,15 @@ function fakeStore(init: {
     async recentMessages(m) {
       return init.messages.filter((x) => x.message_timestamp < m.message_timestamp)
     },
+    async followingMessages(m, withinMs, n) {
+      const at = Date.parse(m.message_timestamp)
+      return init.messages
+        .filter((x) => {
+          const t = Date.parse(x.message_timestamp)
+          return x.message_id !== m.message_id && !!m.sender_phone && x.sender_phone === m.sender_phone && t > at && t <= at + withinMs
+        })
+        .slice(0, n)
+    },
     async conversations() {
       return {
         open: convs.filter((c) => c.status === 'open'),
@@ -540,5 +549,31 @@ describe('runCouncilJob SLA', () => {
     })
     await runCouncilJob({ write: false, limit: 25 }, deps(store, vi.fn()))
     expect(calls).toEqual([['2026-11-16T08:00:00Z', '2026-11-16T10:00:00.000Z']])
+  })
+})
+
+describe('following messages', () => {
+  it("shows the same sender's next lines within 2 minutes with the message, and nobody else's", async () => {
+    const { store } = fakeStore({
+      messages: [
+        msg('m1', '2026-11-16T09:00:00Z', 'https://drive.google.com/drive/folders/abc'),
+        msg('m2', '2026-11-16T09:00:47Z', 'for bank statements seperate folders'),
+        msg('m3', '2026-11-16T09:00:50Z', 'unrelated line from someone else', { sender_phone: '+91 88888 00000' }),
+        msg('m4', '2026-11-16T09:05:00Z', 'much later line'),
+      ],
+    })
+    const prompts: string[] = []
+    const v: VoteFn = async (which, prompt) => {
+      prompts.push(prompt)
+      return { vote: vote('no_action'), model: which === 'A' ? 'a' : 'b', latencyMs: 1 }
+    }
+    await runCouncilJob({ write: false, vote: true, limit: 25 }, deps(store, v))
+    const first = prompts[0]
+    expect(first).toContain('FOLLOWING MESSAGES FROM THE SAME PERSON')
+    expect(first).toContain('for bank statements seperate folders')
+    expect(first).not.toContain('unrelated line from someone else')
+    expect(first).not.toContain('much later line')
+    // The last message has nothing after it from the same person within 2 minutes: no section.
+    expect(prompts[prompts.length - 1]).not.toContain('FOLLOWING MESSAGES')
   })
 })

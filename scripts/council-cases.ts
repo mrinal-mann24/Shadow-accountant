@@ -64,7 +64,97 @@ const base = (message: ContextMessage): CouncilContext => ({
   recentlyClosed: [],
 })
 
+// Azam, 24 Nov 2026 (client name changed). Our team asked for 8 years of bank statements (TB), PTRC login (TP) and a
+// vendor list sorted into purchase or expense (TV). The client answered with a bare Drive folder link, then "for bank
+// statements seperate folders" 47 seconds later. Both models said "continue" but on different tickets, so the link was
+// dropped; the AI also read the second line as an instruction to us. The link delivers the statements: TB should close.
+const ASK_BANK = msg('a1', '2026-11-24T05:39:08Z', 'outgoing', 'Hi Sir, Request you to please share the bank statements for all 8 years.')
+const ASK_PTRC = msg('a2', '2026-11-24T05:43:31Z', 'outgoing', 'Sir, just following up on the PTRC login credentials. Could you please share them?')
+const GST_INFO = msg('a3', '2026-11-24T10:14:14Z', 'outgoing', 'Please go through this for GST refund, the company is not eligible to claim GST refund and can only use it against GST payment')
+const ASK_VENDOR = msg(
+  'a4',
+  '2026-11-24T12:47:34Z',
+  'outgoing',
+  'Hello sir, Please find attached the vendor list. Could you kindly review it and categorize each vendor as either a Purchase Vendor or an Expense Vendor? Thank you!',
+)
+const LINK = msg('a5', '2026-11-24T13:08:54Z', 'incoming', 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz?usp=sharing')
+const SEPARATE = msg('a6', '2026-11-24T13:09:41Z', 'incoming', 'for bank statements seperate folders')
+const TB = {
+  id: 'tb',
+  title: 'Bank statements for all 8 years requested',
+  summary: 'Our team asked the client to share bank statements for all 8 years.',
+  last_message_at: ASK_BANK.at,
+}
+const TP = {
+  id: 'tp',
+  title: 'PTRC login credentials pending from client',
+  summary: 'Our team followed up with the client for the PTRC login credentials.',
+  last_message_at: ASK_PTRC.at,
+}
+const TV = {
+  id: 'tv',
+  title: 'Vendor list: categorise each vendor as purchase or expense',
+  summary: 'Our team shared the vendor list and asked the client to mark each vendor as a Purchase Vendor or an Expense Vendor.',
+  last_message_at: ASK_VENDOR.at,
+}
+
 const CASES: Case[] = [
+  {
+    name: 'client delivery: a Drive link right after our bank statement request, "for bank statements" next -> close tb',
+    ctx: {
+      clientName: 'Steel Works',
+      message: LINK,
+      recent: [ASK_BANK, ASK_PTRC, GST_INFO, ASK_VENDOR],
+      following: [SEPARATE],
+      open: [TB, TP, TV],
+      recentlyClosed: [],
+    },
+    expect: 'close',
+    target: 'tb',
+  },
+  {
+    name: 'client delivery: "for bank statements seperate folders" after the link closed tb -> no_action',
+    ctx: {
+      clientName: 'Steel Works',
+      message: SEPARATE,
+      recent: [ASK_BANK, ASK_PTRC, GST_INFO, ASK_VENDOR, LINK],
+      open: [TP, TV],
+      recentlyClosed: [{ ...TB, summary: 'The client shared the bank statements in a Google Drive folder.', closed_at: LINK.at }],
+    },
+    expect: 'no_action',
+  },
+  {
+    // Same day, 7:50 pm: the client sent the categorised vendor sheet. The AI kept TV open because the client also told
+    // us how to set sub categories, which is our next piece of work, not something still owed by the client.
+    name: 'client delivery: the categorised vendor sheet we asked for, with notes for our next step -> close tv',
+    ctx: {
+      clientName: 'Steel Works',
+      message: msg(
+        'a7',
+        '2026-11-24T14:20:19Z',
+        'incoming',
+        'Hi, I have manually organised the Vendor Master sheet and saved it in the DATA folder on Drive (Vendor_Master_Categorised.xlsx). Please note how the columns work: 1. Categories: Purchase or expense. 2. Sub Category: Assets, Consumables or Purchase of Stock. This depends on the line item in each bill, not on the vendor name. Please check the line items of every bill and set the Sub Category accordingly. 3. Inventory: items under Purchase of Stock and Assets must be added to inventory. Consumables are booked as expense and are not added to inventory.',
+      ),
+      recent: [ASK_BANK, ASK_PTRC, GST_INFO, ASK_VENDOR, LINK, SEPARATE],
+      open: [TP, TV],
+      recentlyClosed: [{ ...TB, summary: 'The client shared the bank statements in a Google Drive folder.', closed_at: LINK.at }],
+    },
+    expect: 'close',
+    target: 'tv',
+  },
+  {
+    // Guard for the rule above: only part of what we asked for arrived, so the ticket stays open.
+    name: 'client delivery: only 5 of the 8 years, rest tomorrow -> continue tb',
+    ctx: {
+      clientName: 'Steel Works',
+      message: msg('a8', '2026-11-24T13:10:00Z', 'incoming', 'sharing bank statements for 2019 to 2023 here, will send the remaining years tomorrow https://drive.google.com/drive/folders/1ZyXwVuTsRqPoNmLkJiHgFeDcBa'),
+      recent: [ASK_BANK, ASK_PTRC, GST_INFO, ASK_VENDOR],
+      open: [TB, TP, TV],
+      recentlyClosed: [],
+    },
+    expect: 'continue',
+    target: 'tb',
+  },
   {
     name: 'invoice: same vehicle and buyer, new weight, no word of a correction -> new',
     ctx: base(

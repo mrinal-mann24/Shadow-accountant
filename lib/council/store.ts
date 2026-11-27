@@ -54,6 +54,11 @@ export interface CouncilStore {
   processingLog(messageIds: string[]): Promise<Map<string, LogRow>>
   /** Up to n messages before msg in the same group (or client when no group), oldest first. */
   recentMessages(msg: PendingMessage, n: number): Promise<PendingMessage[]>
+  /**
+   * Up to n messages the same sender (sender_phone) sent in the same group (or client) after msg, at most withinMs
+   * later, oldest first, any processing state. [] when the sender is unknown. Context only for the council.
+   */
+  followingMessages(msg: PendingMessage, withinMs: number, n: number): Promise<PendingMessage[]>
   conversations(clientId: string, closedSince: string): Promise<{ open: StoredConversation[]; recentlyClosed: StoredConversation[] }>
   /** settings key 'sla_minutes'; null when unset or not a number. */
   slaMinutes(): Promise<number | null>
@@ -144,6 +149,22 @@ export function supabaseCouncilStore(db: SupabaseClient<Database>): CouncilStore
       return (data ?? [])
         .map((m) => ({ ...m, client_id: m.client_id ?? msg.client_id }))
         .reverse()
+    },
+
+    async followingMessages(msg, withinMs, n) {
+      if (!msg.sender_phone) return []
+      const until = new Date(new Date(msg.message_timestamp).getTime() + withinMs).toISOString()
+      let q = db
+        .from('client_messages')
+        .select(MESSAGE_COLUMNS)
+        .gt('message_timestamp', msg.message_timestamp)
+        .lte('message_timestamp', until)
+        .eq('sender_phone', msg.sender_phone)
+        .neq('message_id', msg.message_id)
+      q = msg.whatsapp_group_id ? q.eq('whatsapp_group_id', msg.whatsapp_group_id) : q.eq('client_id', msg.client_id)
+      const { data, error } = await q.order('message_timestamp', { ascending: true }).limit(n)
+      fail('following messages', error)
+      return (data ?? []).map((m) => ({ ...m, client_id: m.client_id ?? msg.client_id }))
     },
 
     async conversations(clientId, closedSince) {
