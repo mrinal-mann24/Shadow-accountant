@@ -120,7 +120,7 @@ describe('waiting side', () => {
   })
   it('sideBadge: red pending from client, green we replied, none while the client waits on us', () => {
     expect(sideBadge(ticket('1', { openedBy: 'outgoing', lastMessageDirection: 'outgoing' }))).toEqual({ tone: 'client', label: 'Pending from client' })
-    expect(sideBadge(ticket('2', { openedBy: 'incoming', lastMessageDirection: 'outgoing' }))).toEqual({ tone: 'replied', label: 'We replied' })
+    expect(sideBadge(ticket('2', { openedBy: 'incoming', lastMessageDirection: 'outgoing' }))).toEqual({ tone: 'replied', label: 'Replied, work open' })
     expect(sideBadge(ticket('3', { openedBy: 'incoming', lastMessageDirection: 'incoming' }))).toBeNull()
     expect(sideBadge(ticket('4', { openedBy: 'outgoing', lastMessageDirection: 'outgoing', status: 'closed' }))).toBeNull()
   })
@@ -156,7 +156,9 @@ describe('waiting side', () => {
 
 describe('ticketUrgency', () => {
   it('breached beats waiting; long wait at 60 min; closed and replied', () => {
-    expect(ticketUrgency(ticket('1', { slaBreached: true }), NOW)).toBe('breached')
+    expect(ticketUrgency(ticket('1', { slaBreached: true, lastMessageDirection: 'incoming', lastMessageAt: '2026-11-26T07:55:00Z' }), NOW)).toBe('breached')
+    // Our team replied after the breach: green, not red (sla_breached stays set as a record).
+    expect(ticketUrgency(ticket('1', { slaBreached: true, lastMessageDirection: 'outgoing' }), NOW)).toBe('replied')
     expect(ticketUrgency(ticket('1', { lastMessageDirection: 'incoming', lastMessageAt: '2026-11-26T07:00:00Z' }), NOW)).toBe(
       'waiting-long',
     )

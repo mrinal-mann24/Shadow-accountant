@@ -87,13 +87,13 @@ export function countBySide(tickets: ConversationItem[]): Record<WaitingSide, nu
 }
 
 /**
- * The badge on an open ticket row: red "Pending from client" on the client's side, green "We replied" on our side
+ * The badge on an open ticket row: red "Pending from client" on the client's side, green "Replied, work open" on our side
  * when our team sent the last message. null when the client is waiting on us (the SLA dot and timer show that).
  */
 export function sideBadge(t: ConversationItem): { tone: 'client' | 'replied'; label: string } | null {
   if (t.status !== 'open') return null
   if (waitingSide(t) === 'client') return { tone: 'client', label: 'Pending from client' }
-  if (t.lastMessageDirection === 'outgoing') return { tone: 'replied', label: 'We replied' }
+  if (t.lastMessageDirection === 'outgoing') return { tone: 'replied', label: 'Replied, work open' }
   return null
 }
 
@@ -104,11 +104,15 @@ export const LONG_WAIT_MINUTES = 60
 
 export type TicketUrgency = 'breached' | 'waiting-long' | 'waiting' | 'replied' | 'closed'
 
+/**
+ * Row colour. Red only while the client is waiting on us (past the SLA, or an hour or more); green once our team sent
+ * the last message, even when the SLA was breached before that reply (sla_breached stays set as a record).
+ */
 export function ticketUrgency(t: ConversationItem, now: Date): TicketUrgency {
   if (t.status !== 'open') return 'closed'
-  if (t.slaBreached) return 'breached'
   const wait = ticketWaitMinutes(t, now)
   if (wait === null) return 'replied'
+  if (t.slaBreached) return 'breached'
   return wait >= LONG_WAIT_MINUTES ? 'waiting-long' : 'waiting'
 }
 

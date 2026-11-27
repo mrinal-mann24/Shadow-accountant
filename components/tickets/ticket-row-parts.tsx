@@ -3,12 +3,17 @@ import type { ConversationItem } from '@/lib/data/types'
 import { cn } from '@/lib/utils'
 import { sideBadge, URGENCY_LABELS, type TicketUrgency } from './logic'
 
-/** Red "Pending from client" or green "We replied" on an open ticket; nothing while the client waits on us. */
+/** Red "Pending from client" or green "Replied, work open" on an open ticket; nothing while the client waits on us. */
 export function SideBadge({ ticket }: { ticket: ConversationItem }) {
   const b = sideBadge(ticket)
   if (!b) return null
   return (
     <span
+      title={
+        b.tone === 'client'
+          ? 'We asked the client and are waiting for their reply.'
+          : 'Our team sent the last message, but the request is not finished yet. The ticket closes when the work is done.'
+      }
       className={cn(
         'rounded-md px-2 py-0.5 text-xs font-medium whitespace-nowrap',
         b.tone === 'client' ? 'bg-destructive-soft text-destructive' : 'bg-success-soft text-success',

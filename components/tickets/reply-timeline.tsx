@@ -95,7 +95,7 @@ export function ReplyTimeline({
         <h2 className="text-[19px] leading-snug font-semibold tracking-[-0.02em] wrap-break-word">{title}</h2>
         <div className="flex flex-wrap items-center gap-1.5">
           <TagBadge tag={t.tag} />
-          {t.slaBreached && t.status === 'open' && <SlaBadge />}
+          {t.slaBreached && t.status === 'open' && t.lastMessageDirection === 'incoming' && <SlaBadge />}
           <StatusBadge status={t.status} />
           <SideBadge ticket={t} />
           {reply.kind === 'replied' && (

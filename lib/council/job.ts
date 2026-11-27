@@ -1,7 +1,7 @@
 import 'server-only'
 import type { JobResult } from '@/lib/jobs/guard'
 import { createAdminSupabase } from '@/lib/supabase/admin'
-import { maskCredentials } from '@/lib/ai/redact'
+import { maskCredentials, maskTaxIds } from '@/lib/ai/redact'
 import { DEFAULT_SLA_MINUTES } from '@/lib/scoring'
 import { effectiveDirection, getTeamNumbers } from '@/lib/team'
 import type { Insert, Update } from '@/lib/db/types'
@@ -351,8 +351,8 @@ async function applyDecision(p: {
         last_message_at: m.message_timestamp,
         last_message_direction: direction,
         message_count: 1,
-        title: maskCredentials(src.title).slice(0, 200) || null,
-        summary: maskCredentials(src.summary),
+        title: maskTaxIds(maskCredentials(src.title)).slice(0, 200) || null,
+        summary: maskTaxIds(maskCredentials(src.summary)),
         tag: src.tag,
         fault: src.fault,
         client_tone: src.client_tone,
@@ -371,7 +371,7 @@ async function applyDecision(p: {
       conversationId = target!.id
       await store.updateConversation(conversationId, {
         ...touch(target!, m, direction, at),
-        ...(src.summary ? { summary: maskCredentials(src.summary) } : {}),
+        ...(src.summary ? { summary: maskTaxIds(maskCredentials(src.summary)) } : {}),
       })
       break
     case 'close':
@@ -388,7 +388,7 @@ async function applyDecision(p: {
         ...touch(target!, m, direction, at),
         status: 'open',
         closed_at: null,
-        ...(src.summary ? { summary: maskCredentials(src.summary) } : {}),
+        ...(src.summary ? { summary: maskTaxIds(maskCredentials(src.summary)) } : {}),
       })
       break
     case 'no_action':

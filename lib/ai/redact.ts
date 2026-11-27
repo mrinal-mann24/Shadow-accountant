@@ -19,7 +19,7 @@ const IS_KEY = new RegExp(KEY.source, 'iu')
 const FILLER = /^(is|was|hai|h|hain|ka|ki|ke|yeh|ye|ya|my|mera|meri|the|new|naya|number|no|num|code|for|:|=|-|–)$/iu
 /** Words that show there is no value ("OTP is required", "password reset link sent"). */
 const NO_VALUE =
-  /^(change|changed|reset|required|needed|incorrect|wrong|expired|expire|sent|shared|share|send|kar|karo|diya|please|pls|not|nahi|nhi|aaya|aya|received|bhejo|bhej|update|updated|link|portal|login|and|or|to|will|bhi|mil|gaya|ho|hoga|chahiye|ok|okay|verified|generated|request|requested|via|on|from|through|sms|email|mail|bata|batao)$/iu
+  /^(change|changed|reset|required|needed|incorrect|wrong|expired|expire|expires|sent|shared|share|send|kar|karo|diya|please|pls|not|nahi|nhi|aaya|aya|received|bhejo|bhej|update|updated|link|portal|login|and|or|to|will|bhi|mil|gaya|ho|hoga|chahiye|ok|okay|verified|generated|request|requested|via|on|from|through|sms|email|mail|bata|batao|goes|go|going|comes|come|coming|arrives|arrive|reaches|reach|needs)$/iu
 const MAX_FILLERS = 2
 
 /** Account or card number right after "a/c", "account (no)" or "card": 9 to 18 digits, or 4-4-4-4 card groups. */
@@ -67,6 +67,11 @@ export function maskCredentials(text: string | null | undefined): string {
       fillers++
     }
     if (!tok || !tok.text) continue
+    // Already masked (text masked when stored, then again when shown): leave it, or "[hidden]" becomes "[hidden]]".
+    if (!tok.quoted && tok.text.startsWith(HIDDEN.slice(0, -1))) {
+      KEY.lastIndex = tok.end
+      continue
+    }
     if (!tok.quoted && (NO_VALUE.test(tok.text) || FILLER.test(tok.text) || IS_KEY.test(` ${tok.text} `))) {
       KEY.lastIndex = at
       continue
@@ -79,6 +84,17 @@ export function maskCredentials(text: string | null | undefined): string {
   let out = text
   for (const c of cuts.sort((a, b) => b.start - a.start)) out = out.slice(0, c.start) + HIDDEN + out.slice(c.end)
   return out.replace(ACCOUNT_NUMBER, (_all, lead: string) => `${lead}${HIDDEN}`)
+}
+
+const GSTIN = /\b\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\b/g
+const PAN = /\b[A-Z]{5}\d{4}[A-Z]\b/g
+
+/**
+ * Hides PAN and GSTIN numbers in text the AI writes (ticket titles and summaries, Teams cards), so a client's tax ids
+ * are not repeated outside the chat they were sent in: "[GSTIN]", "[PAN]". Client messages themselves are not changed.
+ */
+export function maskTaxIds(text: string): string {
+  return text.replace(GSTIN, '[GSTIN]').replace(PAN, '[PAN]')
 }
 
 /** maskCredentials for optional fields: null and undefined stay as they are. */

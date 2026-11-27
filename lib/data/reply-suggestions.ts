@@ -3,7 +3,7 @@ import 'server-only'
 // accountant did with them (reply_suggestions, supabase/proposals/reply-suggestions.sql). Scoped like every read: the
 // client must be in the user's scope. Until the table and the settings rows exist, reads return nothing and writes
 // save nothing, so the feature stays hidden instead of failing.
-import { maskCredentials } from '@/lib/ai/redact'
+import { maskCredentials, maskTaxIds } from '@/lib/ai/redact'
 import type { AppUser } from '@/lib/auth/types'
 import { ForbiddenError } from '@/lib/auth/roles'
 import { maskNumbers, type Correction } from '@/lib/reply/chat-text'
@@ -25,7 +25,7 @@ export function isMissingTable(error: { code?: string; message?: string } | null
 
 /** Masked and cut, as every reply text is before it is stored. */
 export function storableText(text: string): string {
-  return maskCredentials(maskNumbers(text.trim())).slice(0, MAX_SUGGESTION_CHARS)
+  return maskTaxIds(maskCredentials(maskNumbers(text.trim()))).slice(0, MAX_SUGGESTION_CHARS)
 }
 
 /** The style guide when the client is a pilot client with a guide; null otherwise. Read only. */

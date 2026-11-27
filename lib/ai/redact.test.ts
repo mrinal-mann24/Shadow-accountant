@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { sanitiseBody } from '@/lib/ai/sanitise'
-import { hasCredential, HIDDEN, maskCredentials } from './redact'
+import { hasCredential, HIDDEN, maskCredentials, maskTaxIds } from './redact'
+
+describe('maskTaxIds', () => {
+  it('hides PAN and GSTIN in AI-written text', () => {
+    expect(maskTaxIds('The client sent PAN AZGPA6124N on 26 Nov')).toBe('The client sent PAN [PAN] on 26 Nov')
+    expect(maskTaxIds('GSTIN 27AAPFU0939F1ZV filed')).toBe('GSTIN [GSTIN] filed')
+  })
+  it('leaves ordinary codes alone', () => {
+    for (const t of ['GSTR-3B for October', 'ARN AA2910260012345', 'HDFC0001234', 'Invoice INV2026001']) expect(maskTaxIds(t)).toBe(t)
+  })
+})
 
 describe('maskCredentials', () => {
   it('hides the value after a credential word', () => {
@@ -22,6 +32,15 @@ describe('maskCredentials', () => {
       expect(maskCredentials(t)).toBe(t)
       expect(hasCredential(t)).toBe(false)
     }
+  })
+  it('is safe to run twice: masked text stays as it is (no "[hidden]]")', () => {
+    const once = maskCredentials('the OTP is 445566 for PTRC')
+    expect(maskCredentials(once)).toBe(once)
+    expect(maskCredentials(`since the OTP ${HIDDEN} to the registered number`)).toBe(`since the OTP ${HIDDEN} to the registered number`)
+  })
+  it('a verb after OTP is not a value ("the OTP goes to the registered number")', () => {
+    expect(maskCredentials('since the OTP goes to the registered number')).toBe('since the OTP goes to the registered number')
+    expect(maskCredentials('OTP comes on the owner phone')).toBe('OTP comes on the owner phone')
   })
   it('hides long account or card numbers only in bank or card messages', () => {
     expect(maskCredentials('HDFC bank a/c 50100123456789 ifsc HDFC0001234')).toBe(`HDFC bank a/c ${HIDDEN} ifsc HDFC0001234`)

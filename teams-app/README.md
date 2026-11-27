@@ -7,7 +7,7 @@ The Teams app that installs the Shadow bot. `manifest.template.json` is the sour
    `https://<site>/api/teams/messages`.
 2. Build the package from the repo root:
    `node scripts/teams-app.mjs <APP_ID> [SITE_URL]`
-   SITE_URL defaults to `https://shadow-accountant-two.vercel.app`. The script prints the path of
+   SITE_URL defaults to `https://shadow.aiaccountant.com`. The script prints the path of
    `teams-app/dist/shadow-teams-app.zip` (manifest.json, color.png, outline.png).
 3. Upload the zip. For the whole organisation: Teams admin centre > Teams apps > Manage apps > Upload new app.
    For a quick test: Teams > Apps > Manage your apps > Upload a custom app.

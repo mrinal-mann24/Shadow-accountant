@@ -21,15 +21,16 @@ function metaLine(t: ConversationItem, now: Date): string {
   const msgs = `${t.messageCount} ${t.messageCount === 1 ? 'message' : 'messages'}`
   if (t.status !== 'open') return `${ticketClosedLabel(t)} ${formatDateTime(t.closedAt ?? t.lastMessageAt)} · ${msgs}`
   const wait = ticketWaitMinutes(t, now)
-  const lead = t.slaBreached
-    ? wait !== null
-      ? `SLA breached, client waiting ${formatMinutes(wait)}`
-      : 'SLA breached'
-    : wait !== null
-      ? `Client waiting ${formatMinutes(wait)}`
+  const lead =
+    wait !== null
+      ? t.slaBreached
+        ? `SLA breached, client waiting ${formatMinutes(wait)}`
+        : `Client waiting ${formatMinutes(wait)}`
       : waitingSide(t) === 'client'
         ? 'We asked, waiting for the client'
-        : 'Our team replied last'
+        : t.slaBreached
+          ? 'Our team replied, SLA was breached earlier'
+          : 'Our team replied last'
   return `${lead} · ${msgs}`
 }
 

@@ -3,7 +3,7 @@
 // with maskCredentials (CLAUDE.md: never echo client credentials), made plain with plainText (TextBlocks render
 // markdown, so client text must never become a link or an image), then clipped.
 import { z } from 'zod'
-import { maskCredentials } from '@/lib/ai/redact'
+import { maskCredentials, maskTaxIds } from '@/lib/ai/redact'
 import { isTag, TAG_LABELS } from '@/components/accountant/ticket-intent'
 import type { FollowUpAction, FollowUpCardData, FollowUpView } from '@/lib/followups/types'
 import type {
@@ -89,7 +89,7 @@ export function plainText(text: string | null | undefined): string {
 
 /** Mask, then make plain, then clip, so a clip can never cut a credential in half and leave part of it visible. */
 function safe(text: string | null | undefined, max: number): string {
-  return clip(plainText(maskCredentials(text ?? '')), max)
+  return clip(plainText(maskTaxIds(maskCredentials(text ?? ''))), max)
 }
 
 function tagLabel(tag: string | null): string {

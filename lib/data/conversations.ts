@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { maskCredentials, maskNullable } from '@/lib/ai/redact'
+import { maskCredentials, maskTaxIds } from '@/lib/ai/redact'
 import type { AppUser } from '@/lib/auth/types'
 import { ForbiddenError } from '@/lib/auth/roles'
 import { createAdminSupabase } from '@/lib/supabase/admin'
@@ -39,8 +39,9 @@ export function toConversationItem(r: ConvRow, clientName: string | null): Conve
     clientId: r.client_id,
     clientName,
     vaId: r.va_id,
-    title: maskNullable(r.title),
-    summary: maskCredentials(r.summary),
+    // AI-written: credentials and tax ids (PAN, GSTIN) hidden, also in summaries saved before the tax-id mask.
+    title: r.title == null ? null : maskTaxIds(maskCredentials(r.title)),
+    summary: maskTaxIds(maskCredentials(r.summary)),
     status: r.status,
     tag: r.tag,
     fault: r.fault,

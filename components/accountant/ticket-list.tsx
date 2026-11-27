@@ -44,7 +44,7 @@ export function TicketList({
               <p className="text-[14px] font-medium wrap-break-word">{title}</p>
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
                 <TagBadge tag={t.tag} />
-                {t.slaBreached && t.status === 'open' && <SlaBadge />}
+                {t.slaBreached && t.status === 'open' && t.lastMessageDirection === 'incoming' && <SlaBadge />}
                 {t.status !== 'open' && <StatusBadge status={t.status} />}
                 <SideBadge ticket={t} />
                 {wait !== null && <span className="text-xs font-medium text-destructive">Client waiting {formatMinutes(wait)}</span>}

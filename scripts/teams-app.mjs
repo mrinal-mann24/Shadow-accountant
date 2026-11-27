@@ -9,7 +9,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
 
-const DEFAULT_SITE = 'https://shadow-accountant-two.vercel.app'
+const DEFAULT_SITE = 'https://shadow.aiaccountant.com'
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const ACCENT = [0x31, 0x4d, 0xd0]
 

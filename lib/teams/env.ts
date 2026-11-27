@@ -4,7 +4,7 @@ import 'server-only'
 
 export type TeamsEnv = { appId: string; password: string; tenantId: string }
 
-const DEFAULT_SITE_URL = 'https://shadow-accountant-two.vercel.app'
+const DEFAULT_SITE_URL = 'https://shadow.aiaccountant.com'
 
 function read(name: string): string | undefined {
   const v = process.env[name]?.trim()

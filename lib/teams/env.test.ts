@@ -29,6 +29,6 @@ describe('siteUrl', () => {
 
   it('falls back to the production URL', () => {
     vi.stubEnv('NEXT_PUBLIC_SITE_URL', '')
-    expect(siteUrl()).toBe('https://shadow-accountant-two.vercel.app')
+    expect(siteUrl()).toBe('https://shadow.aiaccountant.com')
   })
 })
