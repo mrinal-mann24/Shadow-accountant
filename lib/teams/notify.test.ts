@@ -55,8 +55,10 @@ vi.mock('@/lib/team', async (importActual) => ({
 }))
 
 import {
+  closedCardHandled,
   ESCALATE_AFTER_MINUTES,
   MAX_SENDS_PER_RUN,
+  MAX_UPDATES_PER_RUN,
   NO_CHANNELS_ERROR,
   NO_CONNECTOR_ERROR,
   REMIND_AFTER_MINUTES,
@@ -70,6 +72,7 @@ import {
   MAX_ROWS,
   rowLimitWarning,
   supabaseNotifyReads,
+  type ClosedTicketCard,
   type NotifyReads,
   type PilotClient,
   type UploadForNotify,
@@ -143,6 +146,7 @@ function fakeReads(o: {
   created?: Record<string, string>
   uploads?: UploadForNotify[]
   team?: TeamMessage[]
+  closed?: ClosedTicketCard[]
 }): NotifyReads {
   const tickets = o.tickets ?? []
   const createdAt = (t: TicketForCard) => o.created?.[t.id] ?? t.openedAt
@@ -176,6 +180,8 @@ function fakeReads(o: {
           )
           .map((t) => t.id),
       ),
+    closedTicketCards: async (clients, f) =>
+      (o.closed ?? []).filter((c) => c.closedAt >= f.closedSince && clients.some((x) => x.clientId === c.ticket.clientId)),
   }
 }
 
@@ -252,6 +258,87 @@ function deps(p: Partial<NotifyDeps>): NotifyDeps {
 
 const run = (d: NotifyDeps, o: { write?: boolean; now?: Date } = {}) =>
   runTeamsNotifyJob({ write: o.write ?? true, now: o.now ?? NOW }, d)
+
+describe('runTeamsNotifyJob closed-ticket cards', () => {
+  const closedCard = (p: Partial<ClosedTicketCard> & { refId: string }): ClosedTicketCard => ({
+    kind: 'ticket',
+    channelId: 'chat-admin',
+    activityId: `act-${p.refId}`,
+    ticket: ticket({ id: p.refId.split('@')[0], status: 'closed' }),
+    closedAt: ist('2026-11-16T11:00:00'),
+    closedBy: 'ai',
+    ...p,
+  })
+  const closedOf = (r: { details?: unknown }) => (r.details as { closedCards?: { status: string }[] } | undefined)?.closedCards
+  const chats: PersonalChats = {
+    'admin@x.in': { conversationId: 'chat-admin', serviceUrl: 'https://smba.trafficmanager.net/in/', name: 'Admin', at: NOW.toISOString() },
+  }
+
+  it('says who closed it: Shadow automatically, or the team in Shadow', () => {
+    expect(closedCardHandled('ai', 'x')).toMatchObject({ action: 'closed', by: 'Shadow (automatically)' })
+    expect(closedCardHandled('person', 'x')).toMatchObject({ action: 'closed', by: 'the team in Shadow' })
+  })
+
+  it('a dry run lists the cards it would update and changes nothing', async () => {
+    const store = fakeStore({ chats })
+    const recordAction = vi.fn(async () => {})
+    store.recordAction = recordAction
+    const connector = fakeConnector()
+    const update = vi.fn(async () => {})
+    connector.update = update
+    const r = await run(deps({ store, connector, reads: fakeReads({ closed: [closedCard({ refId: 't1' })] }) }), { write: false })
+    expect(closedOf(r)).toEqual([{ kind: 'ticket', ref: 't1', client: 'Acme', closedBy: 'ai', status: 'would_update' }])
+    expect(update).not.toHaveBeenCalled()
+    expect(recordAction).not.toHaveBeenCalled()
+  })
+
+  it('a write run updates each live card in place and records the close, even when nothing new is found', async () => {
+    const store = fakeStore({ chats })
+    const recordAction = vi.fn(async () => {})
+    store.recordAction = recordAction
+    const connector = fakeConnector()
+    const update = vi.fn(async () => {})
+    connector.update = update
+    const ref = `t2@${ist('2026-11-16T10:00:00')}`
+    const r = await run(
+      deps({
+        store,
+        connector,
+        reads: fakeReads({ closed: [closedCard({ refId: 't1' }), closedCard({ refId: ref, kind: 'escalation', closedBy: 'person' })] }),
+      }),
+    )
+    expect(update).toHaveBeenCalledTimes(2)
+    expect(update).toHaveBeenCalledWith('https://smba.trafficmanager.net/in/', 'chat-admin', 'act-t1', expect.anything())
+    expect(update).toHaveBeenCalledWith('https://smba.trafficmanager.net/in/', 'chat-admin', `act-${ref}`, expect.anything())
+    expect(recordAction).toHaveBeenCalledWith('ticket', 't1', 'closed', 'shadow-ai', NOW.toISOString())
+    expect(recordAction).toHaveBeenCalledWith('escalation', ref, 'closed', 'shadow', NOW.toISOString())
+    expect(r.written).toBe(2)
+    expect(connector.sent).toEqual([])
+  })
+
+  it('a failed update is reported and not recorded, so the next run tries again', async () => {
+    const store = fakeStore({ chats })
+    const recordAction = vi.fn(async () => {})
+    store.recordAction = recordAction
+    const connector = fakeConnector()
+    connector.update = vi.fn(async () => {
+      throw new Error('Teams said 404')
+    })
+    const r = await run(deps({ store, connector, reads: fakeReads({ closed: [closedCard({ refId: 't1' })] }) }))
+    expect(closedOf(r)).toEqual([expect.objectContaining({ ref: 't1', status: 'failed' })])
+    expect(r.errors.join(' ')).toContain('closed card ticket t1 (Acme): Teams said 404')
+    expect(recordAction).not.toHaveBeenCalled()
+  })
+
+  it(`updates at most ${MAX_UPDATES_PER_RUN} per run; the rest are deferred`, async () => {
+    const store = fakeStore({ chats })
+    const connector = fakeConnector()
+    const many = Array.from({ length: MAX_UPDATES_PER_RUN + 2 }, (_, i) => closedCard({ refId: `t${i}` }))
+    const r = await run(deps({ store, connector, reads: fakeReads({ closed: many }) }), { write: false })
+    const statuses = (closedOf(r) ?? []).map((c) => c.status)
+    expect(statuses.filter((s) => s === 'deferred')).toHaveLength(2)
+  })
+})
 
 describe('runTeamsNotifyJob new tickets', () => {
   it('never sends a history ticket (opened 3 days ago, created by the backfill just now)', async () => {

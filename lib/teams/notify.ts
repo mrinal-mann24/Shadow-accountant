@@ -11,9 +11,11 @@ import { siteUrl as defaultSiteUrl } from './env'
 import { appUserByEmail } from './identity'
 import { loadRoutes } from './routing'
 import { supabaseTeamsStore } from './store'
+import type { ClosedBy } from '@/lib/data/types'
 import { supabaseNotifyReads, type NotifyReads, type PilotClient, type UploadForNotify } from './notify-store'
 import type {
   AdaptiveCard,
+  CardHandled,
   DeliveryTarget,
   NotificationAction,
   NotificationKind,
@@ -53,6 +55,10 @@ export const OPENED_WINDOW_MS = 24 * 60 * 60_000
 export const WAITING_WINDOW_MS = 7 * 24 * 60 * 60_000
 /** A claimed ticket / reminder / escalation row still without an activity id this long after sent_at is a lost send. */
 export const STALE_CLAIM_MS = 15 * 60_000
+/** Cards of tickets closed this recently (outside Teams) are updated to "closed". */
+export const CLOSED_CARDS_WINDOW_MS = 7 * 24 * 60 * 60_000
+/** Closed-ticket cards updated at most per run. The rest wait for the next run. */
+export const MAX_UPDATES_PER_RUN = 25
 /** Clicks that mean someone is on it: no more reminders or escalations until the client writes again. */
 const HANDLED_ACTIONS: ReadonlySet<NotificationAction> = new Set(['started', 'closed', 'not_ticket', 'reassigned'])
 
@@ -125,6 +131,15 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
   const warn = (line: string) => {
     warnings.push(line)
   }
+
+  // 0. Cards of tickets closed outside Teams (ticket council or Shadow) lose their buttons. Runs every time, even when
+  // nothing new is found below.
+  const closedCards = await refreshClosedCards(
+    { write: o.write, nowMs, tz, site, clients, warn },
+    { reads, store, connector, errors: result.errors },
+  )
+  result.written += closedCards.filter((c) => c.status === 'updated').length
+  const closedDetail = () => (closedCards.length ? { closedCards } : {})
   const [fresh, waiting, uploads] = await Promise.all([
     reads.newTickets(clients, {
       createdSince: iso(nowMs - NEW_WINDOW_MS),
@@ -139,7 +154,7 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
   const found = { newTickets: fresh.length, waitingTickets: waiting.length, uploads: uploads.length }
   // Nothing new and nothing waiting: skip the role lookups (they cost a few reads per stored chat).
   if (result.processed === 0) {
-    result.details = { clients: clients.length, found, cards: [], ...warningsDetail() }
+    result.details = { clients: clients.length, found, cards: [], ...closedDetail(), ...warningsDetail() }
     return result
   }
 
@@ -147,7 +162,7 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
   for (const s of routes.skipped) warn(`Teams 1:1 chat skipped: ${s}`)
   if (!routes.any) {
     // Not an error: until someone opens Shadow every 5-minute run would otherwise show as a failure (500).
-    result.details = { clients: clients.length, found, cards: [], note: NO_CHANNELS_ERROR, ...warningsDetail() }
+    result.details = { clients: clients.length, found, cards: [], note: NO_CHANNELS_ERROR, ...closedDetail(), ...warningsDetail() }
     return result
   }
 
@@ -339,9 +354,82 @@ export async function runTeamsNotifyJob(o: { write: boolean; now: Date }, deps: 
     cards,
     deferred: deferred.length ? { count: deferred.length, cards: deferred } : undefined,
     ...(held.length ? { held: { reason: 'a Teams role lookup failed; retried next run', cards: held } } : {}),
+    ...closedDetail(),
     ...warningsDetail(),
   }
   return result
+}
+
+export type ClosedCardOutcome = {
+  kind: NotificationKind
+  ref: string
+  client: string
+  closedBy: ClosedBy
+  status: 'would_update' | 'updated' | 'failed' | 'deferred'
+}
+
+/** Line under "Closed by ..." on a card whose ticket was closed outside Teams. */
+export function closedCardHandled(closedBy: ClosedBy, closedAt: string): CardHandled {
+  return closedBy === 'ai'
+    ? { action: 'closed', by: 'Shadow (automatically)', at: closedAt, note: 'The ticket was closed automatically. Nothing more to do here.' }
+    : { action: 'closed', by: 'the team in Shadow', at: closedAt, note: 'The ticket was closed in Shadow.' }
+}
+
+/**
+ * Updates the live card (the copy whose activity id is saved) of every ticket closed outside Teams in the last
+ * CLOSED_CARDS_WINDOW_MS: same card, no buttons, "Closed by Shadow (automatically)" or "Closed by the team in
+ * Shadow". Then records action 'closed' on its row so it is never updated again. Write runs only; a dry run lists
+ * what it would update. Other copies of an escalation (one per Admin) keep their buttons, as after a click; a click
+ * on them is refused as already closed.
+ */
+async function refreshClosedCards(
+  o: { write: boolean; nowMs: number; tz: string; site: string; clients: PilotClient[]; warn: (line: string) => void },
+  d: { reads: NotifyReads; store: TeamsStore; connector: TeamsConnector | null; errors: string[] },
+): Promise<ClosedCardOutcome[]> {
+  const live = await d.reads.closedTicketCards(o.clients, { closedSince: new Date(o.nowMs - CLOSED_CARDS_WINDOW_MS).toISOString(), warn: o.warn })
+  if (!live.length) return []
+
+  let serviceUrlFor: ((channelId: string) => string | null) | null = null
+  let accountants: { vaId: string; name: string }[] | null = null
+  const out: ClosedCardOutcome[] = []
+  let updates = 0
+  for (const c of live) {
+    const outcome: ClosedCardOutcome = { kind: c.kind, ref: c.refId, client: c.ticket.clientName, closedBy: c.closedBy, status: 'would_update' }
+    out.push(outcome)
+    if (updates >= MAX_UPDATES_PER_RUN) {
+      outcome.status = 'deferred'
+      continue
+    }
+    updates++
+    if (!o.write || !d.connector) continue
+    try {
+      if (!serviceUrlFor) {
+        const [chats, channels] = await Promise.all([d.store.personalChats(), d.store.channels()])
+        const byChat = new Map(Object.values(chats).map((p) => [p.conversationId, p.serviceUrl]))
+        const fallback = channels?.serviceUrl ?? Object.values(chats)[0]?.serviceUrl ?? null
+        serviceUrlFor = (id) => byChat.get(id) ?? fallback
+      }
+      const url = serviceUrlFor(c.channelId)
+      if (!url) throw new Error('no Teams service URL is saved for this chat')
+      const handled = closedCardHandled(c.closedBy, c.closedAt)
+      const waitedFrom = c.refId.includes('@') ? c.refId.slice(c.refId.indexOf('@') + 1) : c.ticket.lastMessageAt
+      const waitingMinutes = Math.max(0, Math.floor(businessMinutesBetween(new Date(waitedFrom), new Date(c.closedAt), o.tz)))
+      let card: AdaptiveCard
+      if (c.kind === 'ticket') card = ticketCard(c.ticket, { siteUrl: o.site, handled })
+      else if (c.kind === 'reminder') card = reminderCard(c.ticket, { siteUrl: o.site, waitingMinutes, ref: c.refId, handled })
+      else {
+        accountants ??= (await d.store.accountants()).map((a) => ({ vaId: a.vaId, name: a.name }))
+        card = escalationCard(c.ticket, { siteUrl: o.site, waitingMinutes, ref: c.refId, accountants, handled })
+      }
+      await d.connector.update(url, c.channelId, c.activityId, cardAttachment(card))
+      await d.store.recordAction(c.kind, c.refId, 'closed', c.closedBy === 'ai' ? 'shadow-ai' : 'shadow', new Date(o.nowMs).toISOString())
+      outcome.status = 'updated'
+    } catch (e) {
+      outcome.status = 'failed'
+      d.errors.push(`closed card ${c.kind} ${c.refId} (${c.ticket.clientName}): ${message(e)}`)
+    }
+  }
+  return out
 }
 
 /** One reminder / escalation per client message: the ref changes when the client writes again. */

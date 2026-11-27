@@ -87,6 +87,13 @@ export const URGENCY_LABELS: Record<TicketUrgency, string> = {
   closed: 'Closed',
 }
 
+/** "Closed automatically" (the ticket council), "Closed by the team" (a person), or "Closed" when unknown. */
+export function ticketClosedLabel(t: Pick<ConversationItem, 'closedBy'>): string {
+  if (t.closedBy === 'ai') return 'Closed automatically'
+  if (t.closedBy === 'person') return 'Closed by the team'
+  return 'Closed'
+}
+
 /** Title for a ticket, falling back to the start of the summary. */
 export function ticketTitle(t: Pick<ConversationItem, 'title' | 'summary'>): string {
   return t.title ?? (t.summary.slice(0, 80) || 'Untitled ticket')

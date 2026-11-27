@@ -5,7 +5,7 @@ import type { AppUser } from '@/lib/auth/types'
 import { ForbiddenError } from '@/lib/auth/roles'
 import { createAdminSupabase } from '@/lib/supabase/admin'
 import { getTeamNumbers } from '@/lib/team'
-import { CONV_COLS, toConversationItem } from './conversations'
+import { CONV_COLS, toConversationItem, withClosedBy } from './conversations'
 import { DOCUMENT_COLS, toDocumentItem } from './documents'
 import { MESSAGE_COLS, toMessageItem } from './messages'
 import { canAccessClient, isInvalidInput } from './scope'
@@ -92,8 +92,9 @@ export async function getReplyContext(user: AppUser, ticketId: string, now = new
   }
 
   const clientName = client.data?.client_name ?? null
+  const [ticket] = await withClosedBy(db, [toConversationItem(conv.data, clientName)])
   return {
-    ticket: toConversationItem(conv.data, clientName),
+    ticket,
     clientName,
     ticketMessages: (ticketMsgs.data ?? []).map((r) => toMessageItem(r, team)).reverse(),
     recentMessages: (recentMsgs.data ?? []).map((r) => toMessageItem(r, team)).reverse(),

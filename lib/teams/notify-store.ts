@@ -2,6 +2,8 @@ import 'server-only'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/db/types'
 import { isActiveClient } from '@/lib/data/client-status'
+import { closedByMap } from '@/lib/data/conversations'
+import type { ClosedBy } from '@/lib/data/types'
 import type { TicketForCard } from './types'
 
 // Read-only queries for the teams-notify job (service role). Every query is scoped to the pilot client ids
@@ -42,9 +44,26 @@ export interface NotifyReads {
    * does not count: the council reads the conversation, so "hello sir" a day later is not taken as an answer.
    */
   repliedTickets(tickets: WaitingRef[]): Promise<Set<string>>
+  /**
+   * Cards still live in Teams for tickets closed outside Teams (by the ticket council or in Shadow) since closedSince:
+   * ticket / reminder / escalation rows with a saved activity id and no click recorded. Such a card still shows its
+   * Close button; the job updates it to "closed".
+   */
+  closedTicketCards(clients: PilotClient[], o: { closedSince: string } & ReadWarn): Promise<ClosedTicketCard[]>
 }
 
 export type WaitingRef = Pick<TicketForCard, 'id' | 'clientId' | 'lastMessageAt'>
+
+/** One live card (its teams_notifications row) of a closed ticket. */
+export type ClosedTicketCard = {
+  kind: 'ticket' | 'reminder' | 'escalation'
+  refId: string
+  channelId: string
+  activityId: string
+  ticket: TicketForCard
+  closedAt: string
+  closedBy: ClosedBy
+}
 
 const TICKET_COLUMNS =
   'id, client_id, status, opened_at, created_at, last_message_at, last_message_direction, va_id, sla_breached, title, summary, tag'
@@ -182,6 +201,65 @@ export function supabaseNotifyReads(db: SupabaseClient<Database>): NotifyReads {
         }),
       )
       return new Set(replied.filter((id): id is string => id !== null))
+    },
+
+    async closedTicketCards(clients, o) {
+      if (!clients.length) return []
+      const clientIds = clients.map((c) => c.clientId)
+      const closed = await db
+        .from('conversations')
+        .select(`${TICKET_COLUMNS}, closed_at`)
+        .in('client_id', clientIds)
+        .eq('status', 'closed')
+        .gte('closed_at', o.closedSince)
+        .order('closed_at', { ascending: true })
+        .limit(MAX_ROWS)
+      fail('closed tickets', closed.error)
+      warnIfCapped('closed tickets', closed.data, o)
+      const tickets = (closed.data ?? []).filter((t): t is typeof t & { closed_at: string } => !!t.closed_at)
+      if (!tickets.length) return []
+
+      const live = await db
+        .from('teams_notifications')
+        .select('kind, ref_id, channel_id, activity_id')
+        .in('client_id', clientIds)
+        .in('kind', ['ticket', 'reminder', 'escalation'])
+        .is('action', null)
+        .not('activity_id', 'is', null)
+        .order('sent_at', { ascending: false })
+        .limit(MAX_ROWS)
+      fail('live cards', live.error)
+      warnIfCapped('live cards', live.data, o)
+      const byTicket = new Map(tickets.map((t) => [t.id, t]))
+      const rows = (live.data ?? []).filter((r) => r.activity_id && byTicket.has(r.ref_id.split('@')[0]))
+      if (!rows.length) return []
+
+      const used = [...new Set(rows.map((r) => r.ref_id.split('@')[0]))].map((id) => byTicket.get(id)!)
+      const [cards, by] = await Promise.all([
+        toCards(used, clients),
+        closedByMap(
+          db,
+          used.map((t) => ({ id: t.id, closedAt: t.closed_at })),
+        ),
+      ])
+      const cardById = new Map(cards.map((c) => [c.id, c]))
+      return rows.flatMap((r) => {
+        const id = r.ref_id.split('@')[0]
+        const ticket = cardById.get(id)
+        const t = byTicket.get(id)!
+        if (!ticket) return []
+        return [
+          {
+            kind: r.kind as ClosedTicketCard['kind'],
+            refId: r.ref_id,
+            channelId: r.channel_id,
+            activityId: r.activity_id!,
+            ticket,
+            closedAt: t.closed_at,
+            closedBy: by.get(id) ?? 'person',
+          },
+        ]
+      })
     },
 
     async newUploads(clientIds, o) {

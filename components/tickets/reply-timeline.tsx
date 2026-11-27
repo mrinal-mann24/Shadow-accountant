@@ -10,7 +10,7 @@ import { TicketActions } from '@/components/accountant/ticket-actions'
 import { SlaBadge, StatusBadge, TagBadge } from '@/components/accountant/ui'
 import type { ReplyContext } from '@/lib/data/reply-context'
 import { cn } from '@/lib/utils'
-import { buildTimeline, firstReply, ticketTitle, type TimelineEvent } from './logic'
+import { buildTimeline, firstReply, ticketClosedLabel, ticketTitle, type TimelineEvent } from './logic'
 
 export const TICKET_PANEL_ID = 'ticket-panel'
 
@@ -109,7 +109,12 @@ export function ReplyTimeline({
         )}
         <p className="text-xs text-meta">
           Opened {formatDateTime(t.openedAt)}
-          {t.closedAt && <> · Closed {formatDateTime(t.closedAt)}</>}
+          {t.closedAt && (
+            <>
+              {' '}
+              · {ticketClosedLabel(t)} {formatDateTime(t.closedAt)}
+            </>
+          )}
         </p>
       </div>
 

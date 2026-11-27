@@ -4,7 +4,7 @@ import Link from 'next/link'
 import type { ConversationItem } from '@/lib/data/types'
 import { ticketAction } from '@/app/(app)/tickets/actions'
 import { draftReplyAction } from '@/app/(app)/tickets/draft-action'
-import { shortAge, ticketTitle, ticketUrgency } from '@/components/tickets/logic'
+import { shortAge, ticketClosedLabel, ticketTitle, ticketUrgency } from '@/components/tickets/logic'
 import { AgeText, StatusDot } from '@/components/tickets/ticket-row-parts'
 import { DraftReplyButton } from './draft-reply'
 import { formatAgo, formatDateTime, formatMinutes, ticketWaitMinutes } from './logic'
@@ -60,7 +60,12 @@ export function TicketList({
                 )}
                 Last message {formatAgo(t.lastMessageAt, now)} ({formatDateTime(t.lastMessageAt)}) · {t.messageCount}{' '}
                 {t.messageCount === 1 ? 'message' : 'messages'}
-                {t.closedAt && <> · Closed {formatDateTime(t.closedAt)}</>}
+                {t.closedAt && (
+                  <>
+                    {' '}
+                    · {ticketClosedLabel(t)} {formatDateTime(t.closedAt)}
+                  </>
+                )}
               </p>
             </div>
             <span className="pt-0.5 text-right">

@@ -5,12 +5,20 @@ import { formatDateTime, formatMinutes, ticketWaitMinutes } from '@/components/a
 import { EmptyState, TagBadge } from '@/components/accountant/ui'
 import type { ConversationItem } from '@/lib/data/types'
 import { cn } from '@/lib/utils'
-import { shortAge, ticketHref, ticketTitle, ticketUrgency, type ClientTicketGroup, type TicketParams } from './logic'
+import {
+  shortAge,
+  ticketClosedLabel,
+  ticketHref,
+  ticketTitle,
+  ticketUrgency,
+  type ClientTicketGroup,
+  type TicketParams,
+} from './logic'
 import { AgeText, StatusDot } from './ticket-row-parts'
 
 function metaLine(t: ConversationItem, now: Date): string {
   const msgs = `${t.messageCount} ${t.messageCount === 1 ? 'message' : 'messages'}`
-  if (t.status !== 'open') return `Closed ${formatDateTime(t.closedAt ?? t.lastMessageAt)} · ${msgs}`
+  if (t.status !== 'open') return `${ticketClosedLabel(t)} ${formatDateTime(t.closedAt ?? t.lastMessageAt)} · ${msgs}`
   const wait = ticketWaitMinutes(t, now)
   const lead = t.slaBreached
     ? wait !== null

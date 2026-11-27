@@ -7,7 +7,7 @@ import { createAdminSupabase } from '@/lib/supabase/admin'
 import type { Row, Update } from '@/lib/db/types'
 import { chunk, fetchAll } from './paginate'
 import { assertCanMutate, canAccessClient, isInvalidInput, scopedClientIds, scopeOf, type Db } from './scope'
-import type { ConversationItem, ConversationPatch } from './types'
+import type { ClosedBy, ConversationItem, ConversationPatch } from './types'
 
 export const CONV_COLS =
   'id, client_id, va_id, title, summary, status, tag, fault, client_tone, va_tone, sla_breached, opened_at, opened_by, closed_at, last_message_at, last_message_direction, message_count'
@@ -56,6 +56,76 @@ export function toConversationItem(r: ConvRow, clientName: string | null): Conve
   }
 }
 
+/**
+ * Who closed a ticket. The council closes with closed_at = the closing message's time; a person (Shadow or a
+ * Teams button) closes with closed_at = the click time. So a closed ticket whose closed_at equals the time of a
+ * council "close" message was closed by the AI. undefined while open. Pure.
+ */
+export function decideClosedBy(closedAt: string | null, aiCloseTimes: readonly string[] | undefined): ClosedBy | undefined {
+  if (!closedAt) return undefined
+  const at = Date.parse(closedAt)
+  return aiCloseTimes?.some((t) => Date.parse(t) === at) ? 'ai' : 'person'
+}
+
+/** Ticket id -> message times of the council "close" verdicts on it. Read-only; rows are already in scope. */
+async function aiCloseTimes(db: Db, ticketIds: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>()
+  const verdicts: { message_id: string; final_conv_id: string | null }[] = []
+  for (const part of chunk([...new Set(ticketIds)])) {
+    const { data, error } = await db
+      .from('council_verdicts')
+      .select('message_id, final_conv_id')
+      .eq('final_decision', 'close')
+      .in('final_conv_id', part)
+    if (error) throw new Error(`aiCloseTimes: ${error.message}`)
+    verdicts.push(...(data ?? []))
+  }
+  const times = new Map<string, string>()
+  for (const part of chunk([...new Set(verdicts.map((v) => v.message_id))])) {
+    const { data, error } = await db.from('client_messages').select('message_id, message_timestamp').in('message_id', part)
+    if (error) throw new Error(`aiCloseTimes: ${error.message}`)
+    for (const m of data ?? []) times.set(m.message_id, m.message_timestamp)
+  }
+  for (const v of verdicts) {
+    const at = times.get(v.message_id)
+    if (!v.final_conv_id || !at) continue
+    out.set(v.final_conv_id, [...(out.get(v.final_conv_id) ?? []), at])
+  }
+  return out
+}
+
+/**
+ * Ticket id -> who closed it, for closed tickets (open ones are left out). Read-only. The caller has already
+ * scoped the tickets (a Shadow user's list, or the teams-notify job's pilot clients). Throws on a read error.
+ */
+export async function closedByMap(db: Db, tickets: { id: string; closedAt: string | null }[]): Promise<Map<string, ClosedBy>> {
+  const out = new Map<string, ClosedBy>()
+  const closed = tickets.filter((t) => t.closedAt)
+  if (closed.length === 0) return out
+  const times = await aiCloseTimes(
+    db,
+    closed.map((t) => t.id),
+  )
+  for (const t of closed) {
+    const by = decideClosedBy(t.closedAt, times.get(t.id))
+    if (by) out.set(t.id, by)
+  }
+  return out
+}
+
+/** Sets closedBy on closed tickets. A failed read only drops the label ("Closed"), never the page. */
+export async function withClosedBy(db: Db, items: ConversationItem[]): Promise<ConversationItem[]> {
+  if (!items.some((t) => t.closedAt)) return items
+  let by: Map<string, ClosedBy>
+  try {
+    by = await closedByMap(db, items)
+  } catch (e) {
+    console.error('withClosedBy: could not read council verdicts', e)
+    return items
+  }
+  return items.map((t) => (by.has(t.id) ? { ...t, closedBy: by.get(t.id) } : t))
+}
+
 async function clientNames(db: Db, ids: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>()
   for (const part of chunk([...new Set(ids)])) {
@@ -99,7 +169,10 @@ export async function listConversations(
     db,
     rows.map((r) => r.client_id),
   )
-  return rows.map((r) => toConversationItem(r, names.get(r.client_id) ?? null))
+  return withClosedBy(
+    db,
+    rows.map((r) => toConversationItem(r, names.get(r.client_id) ?? null)),
+  )
 }
 
 export const conversationPatchSchema = z

@@ -93,7 +93,11 @@ export type ConversationItem = {
   /** As stored by the council (may use the unreliable stored direction). */
   lastMessageDirection: string | null
   messageCount: number
+  /** Closed tickets only: 'ai' when the ticket council closed it, 'person' when someone did. Unset when unknown. */
+  closedBy?: ClosedBy
 }
+
+export type ClosedBy = 'ai' | 'person'
 
 export type ConversationPatch = { status?: ConversationStatus; tag?: string; summary?: string; title?: string }
 
