@@ -5,7 +5,7 @@ import type { ConversationItem } from '@/lib/data/types'
 import { ticketAction } from '@/app/(app)/tickets/actions'
 import { draftReplyAction } from '@/app/(app)/tickets/draft-action'
 import { shortAge, ticketClosedLabel, ticketTitle, ticketUrgency } from '@/components/tickets/logic'
-import { AgeText, StatusDot } from '@/components/tickets/ticket-row-parts'
+import { AgeText, SideBadge, StatusDot } from '@/components/tickets/ticket-row-parts'
 import { DraftReplyButton } from './draft-reply'
 import { formatAgo, formatDateTime, formatMinutes, ticketWaitMinutes } from './logic'
 import { TicketActions } from './ticket-actions'
@@ -46,6 +46,7 @@ export function TicketList({
                 <TagBadge tag={t.tag} />
                 {t.slaBreached && t.status === 'open' && <SlaBadge />}
                 {t.status !== 'open' && <StatusBadge status={t.status} />}
+                <SideBadge ticket={t} />
                 {wait !== null && <span className="text-xs font-medium text-destructive">Client waiting {formatMinutes(wait)}</span>}
               </div>
               {t.summary && t.title && <p className="mt-1.5 line-clamp-2 text-[13px] text-muted-foreground">{t.summary}</p>}

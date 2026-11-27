@@ -15,6 +15,7 @@ import type {
   TeamOverview,
 } from './types'
 import { summariseVerdicts } from './usage'
+import { waitingSide } from './waiting-side'
 
 export const PROCESSING_PENDING = 'pending'
 export const PROCESSING_FAILED = 'failed'
@@ -43,7 +44,8 @@ export function buildTeamOverview(
       name: v.va_name,
       status: v.status,
       clientCount: mine.length,
-      openTickets: myTickets.length,
+      // Waiting on us only: a ticket where we asked the client and they have not answered is not the team's load.
+      openTickets: myTickets.filter((t) => waitingSide(t) === 'us').length,
       openEscalations: myTickets.filter((t) => t.tag === ESCALATION_TAG).length,
       slaBreachedOpen: myTickets.filter((t) => t.slaBreached).length,
       unansweredClients: mine.filter((c) => (c.unansweredCount ?? 0) > 0).length,

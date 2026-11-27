@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import type { Tag } from '@/lib/council/types'
-import type { TagCount } from './logic'
+import { DEFAULT_SIDE, type TagCount, type WaitingSide } from './logic'
 
 const LABEL_CLASS: Record<Tag, string> = {
   escalation: 'text-[#8A4205]',
@@ -17,14 +17,18 @@ export function TicketTypeStrip({
   untagged,
   activeTag,
   q,
+  side,
 }: {
   counts: TagCount[]
   untagged: number
   activeTag?: string
   q?: string
+  /** Kept in the links so a type filter stays on the chosen tab (Waiting on client). */
+  side?: WaitingSide
 }) {
   const href = (tag: Tag) => {
     const sp = new URLSearchParams()
+    if (side && side !== DEFAULT_SIDE) sp.set('side', side)
     if (activeTag !== tag) sp.set('tag', tag)
     if (q) sp.set('q', q)
     const s = sp.toString()

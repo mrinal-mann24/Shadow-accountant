@@ -4,6 +4,7 @@ import { TAG_LABELS } from '@/components/accountant/ticket-intent'
 import { DEFAULT_TIMEZONE, ticketWaitMinutes } from '@/components/accountant/logic'
 import { TAGS, type Tag } from '@/lib/council/types'
 import type { ConversationItem, MessageItem } from '@/lib/data/types'
+import { waitingSide, type WaitingSide } from '@/lib/data/waiting-side'
 
 // ---------------------------------------------------------------- Ticket types strip
 
@@ -63,6 +64,39 @@ export function groupTicketsByClient(tickets: ConversationItem[]): ClientTicketG
   return list.sort((a, b) => b.tickets.length - a.tickets.length || firstSeen.get(a.clientId)! - firstSeen.get(b.clientId)!)
 }
 
+// ---------------------------------------------------------------- Whose turn (waiting side)
+
+export { waitingSide, type WaitingSide }
+
+export const WAITING_SIDES: readonly WaitingSide[] = ['us', 'client']
+
+export const WAITING_SIDE_LABELS: Record<WaitingSide, string> = {
+  us: 'Waiting on us',
+  client: 'Waiting on client',
+}
+
+export function isWaitingSide(v: unknown): v is WaitingSide {
+  return v === 'us' || v === 'client'
+}
+
+/** Open tickets per side. Closed tickets are not counted. */
+export function countBySide(tickets: ConversationItem[]): Record<WaitingSide, number> {
+  const out: Record<WaitingSide, number> = { us: 0, client: 0 }
+  for (const t of tickets) if (t.status === 'open') out[waitingSide(t)]++
+  return out
+}
+
+/**
+ * The badge on an open ticket row: red "Pending from client" on the client's side, green "We replied" on our side
+ * when our team sent the last message. null when the client is waiting on us (the SLA dot and timer show that).
+ */
+export function sideBadge(t: ConversationItem): { tone: 'client' | 'replied'; label: string } | null {
+  if (t.status !== 'open') return null
+  if (waitingSide(t) === 'client') return { tone: 'client', label: 'Pending from client' }
+  if (t.lastMessageDirection === 'outgoing') return { tone: 'replied', label: 'We replied' }
+  return null
+}
+
 // ---------------------------------------------------------------- Row urgency
 
 /** Client waits this long (minutes) before a row turns red. Same as the default SLA in lib/scoring. */
@@ -117,12 +151,16 @@ export function shortAge(iso: string | null | undefined, now: Date): string {
 
 // ---------------------------------------------------------------- Selection link
 
-export type TicketParams = { status?: string; tag?: string; q?: string }
+export type TicketParams = { status?: string; tag?: string; q?: string; side?: WaitingSide }
+
+/** The default side tab on open tickets: Waiting on us. */
+export const DEFAULT_SIDE: WaitingSide = 'us'
 
 /** /tickets link that keeps the current filters and selects one ticket (?t=). */
 export function ticketHref(params: TicketParams, id: string): string {
   const sp = new URLSearchParams()
   if (params.status && params.status !== 'open') sp.set('status', params.status)
+  else if (params.side && params.side !== DEFAULT_SIDE) sp.set('side', params.side)
   if (params.tag) sp.set('tag', params.tag)
   if (params.q) sp.set('q', params.q)
   sp.set('t', id)

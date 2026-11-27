@@ -11,6 +11,7 @@ import { SlaBadge, StatusBadge, TagBadge } from '@/components/accountant/ui'
 import type { ReplyContext } from '@/lib/data/reply-context'
 import { cn } from '@/lib/utils'
 import { buildTimeline, firstReply, ticketClosedLabel, ticketTitle, type TimelineEvent } from './logic'
+import { SideBadge } from './ticket-row-parts'
 
 export const TICKET_PANEL_ID = 'ticket-panel'
 
@@ -91,6 +92,7 @@ export function ReplyTimeline({
           <TagBadge tag={t.tag} />
           {t.slaBreached && t.status === 'open' && <SlaBadge />}
           <StatusBadge status={t.status} />
+          <SideBadge ticket={t} />
           {reply.kind === 'replied' && (
             <span className="rounded-md bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
               First reply in {formatMinutes(reply.minutes)}

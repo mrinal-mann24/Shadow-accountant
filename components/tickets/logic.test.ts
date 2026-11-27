@@ -2,14 +2,19 @@ import { describe, expect, it } from 'vitest'
 import type { ConversationItem, MessageItem } from '@/lib/data/types'
 import {
   buildTimeline,
+  countBySide,
   countOpenTicketTags,
   firstReply,
   groupTicketsByClient,
+  isWaitingSide,
   parseFileShared,
   shortAge,
+  sideBadge,
+  ticketClosedLabel,
   ticketHref,
   ticketTitle,
   ticketUrgency,
+  waitingSide,
 } from './logic'
 
 const NOW = new Date('2026-11-26T08:00:00Z')
@@ -90,6 +95,48 @@ describe('groupTicketsByClient', () => {
   })
   it('returns [] for no tickets', () => {
     expect(groupTicketsByClient([])).toEqual([])
+  })
+})
+
+describe('waiting side', () => {
+  it('client side only when our team raised the ticket and sent the last message', () => {
+    expect(waitingSide(ticket('1', { openedBy: 'outgoing', lastMessageDirection: 'outgoing' }))).toBe('client')
+    expect(waitingSide(ticket('2', { openedBy: 'outgoing', lastMessageDirection: 'incoming' }))).toBe('us')
+    expect(waitingSide(ticket('3', { openedBy: 'incoming', lastMessageDirection: 'outgoing' }))).toBe('us')
+    expect(waitingSide(ticket('4', { openedBy: 'incoming', lastMessageDirection: 'incoming' }))).toBe('us')
+    expect(waitingSide(ticket('5', { openedBy: 'outgoing', lastMessageDirection: null }))).toBe('us')
+  })
+  it('countBySide counts open tickets only', () => {
+    expect(
+      countBySide([
+        ticket('1', { openedBy: 'outgoing', lastMessageDirection: 'outgoing' }),
+        ticket('2', { openedBy: 'incoming', lastMessageDirection: 'incoming' }),
+        ticket('3', { openedBy: 'incoming', lastMessageDirection: 'outgoing' }),
+        ticket('4', { openedBy: 'outgoing', lastMessageDirection: 'outgoing', status: 'closed' }),
+      ]),
+    ).toEqual({ us: 2, client: 1 })
+  })
+  it('sideBadge: red pending from client, green we replied, none while the client waits on us', () => {
+    expect(sideBadge(ticket('1', { openedBy: 'outgoing', lastMessageDirection: 'outgoing' }))).toEqual({ tone: 'client', label: 'Pending from client' })
+    expect(sideBadge(ticket('2', { openedBy: 'incoming', lastMessageDirection: 'outgoing' }))).toEqual({ tone: 'replied', label: 'We replied' })
+    expect(sideBadge(ticket('3', { openedBy: 'incoming', lastMessageDirection: 'incoming' }))).toBeNull()
+    expect(sideBadge(ticket('4', { openedBy: 'outgoing', lastMessageDirection: 'outgoing', status: 'closed' }))).toBeNull()
+  })
+  it('isWaitingSide accepts only us and client', () => {
+    expect(isWaitingSide('us')).toBe(true)
+    expect(isWaitingSide('client')).toBe(true)
+    expect(isWaitingSide('team')).toBe(false)
+    expect(isWaitingSide(undefined)).toBe(false)
+  })
+  it('ticketHref keeps a non-default side on open tickets only', () => {
+    expect(ticketHref({ status: 'open', side: 'client' }, 't1')).toBe('/tickets?side=client&t=t1')
+    expect(ticketHref({ status: 'open', side: 'us' }, 't1')).toBe('/tickets?t=t1')
+    expect(ticketHref({ status: 'closed', side: 'client' }, 't1')).toBe('/tickets?status=closed&t=t1')
+  })
+  it('ticketClosedLabel', () => {
+    expect(ticketClosedLabel({ closedBy: 'ai' })).toBe('Closed automatically')
+    expect(ticketClosedLabel({ closedBy: 'person' })).toBe('Closed by the team')
+    expect(ticketClosedLabel({})).toBe('Closed')
   })
 })
 

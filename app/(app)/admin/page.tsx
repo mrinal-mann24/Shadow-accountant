@@ -75,8 +75,9 @@ function TeamBody({
               Senior accountants
             </h2>
             <p className="mt-0.5 text-[13px] text-muted-foreground">
-              Counts follow the accountant each client is assigned to. The bar is each person&apos;s share of open tickets:
-              red with escalations or SLA breaches, amber with clients waiting for a reply.
+              Counts follow the accountant each client is assigned to. The number is tickets waiting on us (tickets
+              waiting on a client are left out). The bar is each person&apos;s share of those: red with escalations or SLA
+              breaches, amber with clients waiting for a reply.
             </p>
           </div>
           {isAdmin && (

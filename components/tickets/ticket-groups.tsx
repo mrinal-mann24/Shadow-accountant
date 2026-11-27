@@ -11,10 +11,11 @@ import {
   ticketHref,
   ticketTitle,
   ticketUrgency,
+  waitingSide,
   type ClientTicketGroup,
   type TicketParams,
 } from './logic'
-import { AgeText, StatusDot } from './ticket-row-parts'
+import { AgeText, SideBadge, StatusDot } from './ticket-row-parts'
 
 function metaLine(t: ConversationItem, now: Date): string {
   const msgs = `${t.messageCount} ${t.messageCount === 1 ? 'message' : 'messages'}`
@@ -26,7 +27,9 @@ function metaLine(t: ConversationItem, now: Date): string {
       : 'SLA breached'
     : wait !== null
       ? `Client waiting ${formatMinutes(wait)}`
-      : 'Our team replied last'
+      : waitingSide(t) === 'client'
+        ? 'We asked, waiting for the client'
+        : 'Our team replied last'
   return `${lead} · ${msgs}`
 }
 
@@ -92,6 +95,7 @@ export function TicketGroups({
                         <span className="truncate text-[13px] font-medium">{ticketTitle(t)}</span>
                         <span className="flex min-w-0 flex-wrap items-center gap-1.5">
                           <TagBadge tag={t.tag} />
+                          <SideBadge ticket={t} />
                           <span className="truncate text-xs text-muted-foreground">{metaLine(t, now)}</span>
                         </span>
                       </span>

@@ -21,6 +21,7 @@ import type { AppUser } from '@/lib/auth/types'
 import { getClientBucket } from '@/lib/buckets'
 import { listClients, listConversations, listDueFollowUps, listRecentActivity } from '@/lib/data'
 import { groupClients, subgroupCount } from '@/lib/data/client-groups'
+import { waitingSide } from '@/lib/data/waiting-side'
 import type { FollowUpView } from '@/lib/followups/types'
 
 export const metadata: Metadata = { title: 'Home' }
@@ -59,11 +60,14 @@ export default async function HomePage() {
     loadDueFollowUps(user),
   ])
   const buckets = new Map(await Promise.all(clients.map(async (c) => [c.id, await getClientBucket(c.id)] as const)))
-  const kpis = computeHomeKpis(clients, openTickets)
+  // Home works the team's own queue: tickets waiting on a client are counted apart (Tickets, "Waiting on client").
+  const ourTickets = openTickets.filter((t) => waitingSide(t) === 'us')
+  const onClient = openTickets.length - ourTickets.length
+  const kpis = computeHomeKpis(clients, ourTickets)
   // Same rule as the Clients page: active HubSpot deals, subgroups counted inside their main group.
   const myClientGroups = groupClients(allClients).clients
   const groups = groupClientsByBucket(clients, buckets)
-  const tickets = sortTicketsBySlaLag(openTickets, now)
+  const tickets = sortTicketsBySlaLag(ourTickets, now)
   const firstName = user.name.split(' ')[0] || user.name
 
   const followUpsDue = dueFollowUps?.length ?? null
@@ -103,7 +107,13 @@ export default async function HomePage() {
           href="/clients"
           className="anim-d1"
         />
-        <KpiCard label="Open tickets" value={kpis.openTickets} hint="Across your clients" href="/tickets" className="anim-d2" />
+        <KpiCard
+          label="Waiting on us"
+          value={kpis.openTickets}
+          hint={onClient > 0 ? `Open tickets. ${onClient} more waiting on clients` : 'Open tickets across your clients'}
+          href="/tickets"
+          className="anim-d2"
+        />
         <KpiCard
           label="SLA breached"
           value={kpis.slaBreached}

@@ -66,17 +66,17 @@ export function AccountantCard({ a, index, teamOpenTickets }: { a: AccountantWor
 
       <div className="flex gap-4">
         <Figure value={a.clientCount} label="clients" />
-        <Figure value={a.openTickets} label="open tickets" className={a.slaBreachedOpen > 0 ? 'text-destructive' : undefined} />
+        <Figure value={a.openTickets} label="waiting on us" className={a.slaBreachedOpen > 0 ? 'text-destructive' : undefined} />
       </div>
 
       <div
         className="h-1.5 overflow-hidden rounded-full bg-[#EEF0F4]"
         role="meter"
-        aria-label="Share of team open tickets"
+        aria-label="Share of team tickets waiting on us"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={load.share}
-        title={`${load.share}% of the team's open tickets`}
+        title={`${load.share}% of the team's tickets waiting on us`}
       >
         <div className={cn('anim-fill h-full rounded-full', BAR[load.tone])} style={{ width: `${load.share}%` }} />
       </div>
