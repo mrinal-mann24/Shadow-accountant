@@ -79,7 +79,7 @@ Next.js 16 app at the repo root (`app/`, `components/`, `lib/`). Setup, env and 
 - `npm run test` (Vitest, node only)
 - `npm run build` (works with no env set)
 
-Auth routes: `/login`, `/auth/callback`, `/auth/sign-out`. Job routes: `/api/jobs/{health-score,council,hubspot-sync,embed}`
+Auth routes: `/login`, `/auth/callback`, `/auth/sign-out`. Job routes: `/api/jobs/{health-score,council,hubspot-sync,embed,teams-notify,follow-ups,style-guides}`
 (Bearer `CRON_SECRET`, dry-run unless `JOBS_WRITE_ENABLED=true` and the job is listed in `JOBS_WRITE_ONLY`; a blank list means no job writes).
 Build contracts and per-agent notes: `docs/agents/`.
 

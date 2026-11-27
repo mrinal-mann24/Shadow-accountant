@@ -14,6 +14,7 @@ import {
   WAITING_SIDE_LABELS,
   WAITING_SIDES,
   waitingSide,
+  wantsSuggestedReply,
   type WaitingSide,
 } from '@/components/tickets/logic'
 import { ReplyTimeline, ReplyTimelineMessage, TICKET_PANEL_ID } from '@/components/tickets/reply-timeline'
@@ -25,6 +26,7 @@ import type { AppUser } from '@/lib/auth/types'
 import { TAGS } from '@/lib/council/types'
 import { ForbiddenError, listConversations, listVas } from '@/lib/data'
 import { getReplyContext, type ReplyContext } from '@/lib/data/reply-context'
+import { getReplyStyle } from '@/lib/data/reply-suggestions'
 import { cn } from '@/lib/utils'
 
 export const metadata: Metadata = { title: 'Tickets' }
@@ -64,6 +66,20 @@ async function loadPanel(user: AppUser, id: string | null, now: Date): Promise<P
   }
 }
 
+/**
+ * The Suggested reply box shows for an open ticket where the client is waiting on us, when the client is a pilot
+ * client with a style guide. A failed check hides the box; it never breaks the page.
+ */
+async function hasSuggestedReply(user: AppUser, ctx: ReplyContext): Promise<boolean> {
+  if (!wantsSuggestedReply(ctx.ticket)) return false
+  try {
+    return (await getReplyStyle(user, ctx.ticket.clientId)) !== null
+  } catch (e) {
+    console.error('tickets: suggested reply check failed', e)
+    return false
+  }
+}
+
 export default async function TicketsPage({ searchParams }: { searchParams: Promise<Params> }) {
   const user = await requireUser()
   const sp = await searchParams
@@ -98,6 +114,7 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
   // Selected ticket: from ?t=, else the first row so the panel is never empty when there are tickets.
   const selectedId = pickedId ?? groups[0]?.tickets[0]?.id ?? null
   const panel = await loadPanel(user, selectedId, now)
+  const suggested = panel.kind === 'ticket' && (await hasSuggestedReply(user, panel.ctx)) ? { readOnly: !!user.viewingAs } : null
 
   const noun = tickets.length === 1 ? 'ticket' : 'tickets'
   const statusWord = status === 'all' ? '' : `${STATUSES[status].toLowerCase()} `
@@ -230,6 +247,7 @@ export default async function TicketsPage({ searchParams }: { searchParams: Prom
             now={now}
             vaName={panel.ctx.ticket.vaId ? (vaNames.get(panel.ctx.ticket.vaId) ?? null) : null}
             readOnlyNote={ticketReadOnlyNote(user)}
+            suggested={suggested}
           />
         ) : (
           (tickets.length > 0 || pickedId) && <ReplyTimelineMessage title={panel.title}>{panel.text}</ReplyTimelineMessage>

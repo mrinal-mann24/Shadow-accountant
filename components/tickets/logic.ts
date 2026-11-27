@@ -128,6 +128,31 @@ export function ticketClosedLabel(t: Pick<ConversationItem, 'closedBy'>): string
   return 'Closed'
 }
 
+/** Masking tokens, not placeholders for the accountant. */
+const MASK_TOKENS = new Set(['number', 'hidden'])
+
+/**
+ * Placeholders a suggested reply leaves for the accountant to fill, in order and without repeats:
+ * "[attach: invoice PDF]", "[amount]". The masking tokens [number] and [hidden] are not placeholders.
+ */
+export function findPlaceholders(text: string): string[] {
+  const out: string[] = []
+  for (const m of text.matchAll(/\[([^\]\n]{2,60})\]/g)) {
+    const inner = m[1].trim()
+    if (MASK_TOKENS.has(inner.toLowerCase()) || out.includes(m[0])) continue
+    out.push(m[0])
+  }
+  return out
+}
+
+/**
+ * Show the Suggested reply box: an open ticket where the client is waiting on us (their message is the latest). The
+ * client being a pilot client with a style guide is checked on the server.
+ */
+export function wantsSuggestedReply(t: Pick<ConversationItem, 'status' | 'lastMessageDirection'>): boolean {
+  return t.status === 'open' && t.lastMessageDirection === 'incoming'
+}
+
 /** Title for a ticket, falling back to the start of the summary. */
 export function ticketTitle(t: Pick<ConversationItem, 'title' | 'summary'>): string {
   return t.title ?? (t.summary.slice(0, 80) || 'Untitled ticket')

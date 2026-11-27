@@ -49,7 +49,8 @@ Names only live in `.env.example`; never commit values. Set the same names in Ve
 | `OPENROUTER_EMBED_MODEL`                                                            | embed, vector search                                                   | Must return 1536 dimensions (`vector(1536)`), for example `openai/text-embedding-3-small`                                                                                             |
 | `CRON_SECRET`                                                                       | every job route                                                        | Job routes reject every request when it is unset. Vercel Cron sends `Authorization: Bearer $CRON_SECRET` once it is set in the project                                                |
 | `JOBS_WRITE_ENABLED`                                                                | every job and the HubSpot webhook                                      | Writes happen only when this is `true` and the job is in `JOBS_WRITE_ONLY`. Default: dry-run                                                                                          |
-| `JOBS_WRITE_ONLY`                                                                   | every job and the HubSpot webhook                                      | Comma list of the jobs allowed to write: `health-score`, `council`, `hubspot-sync` (also the webhook), `embed`, `teams-notify`, `follow-ups`. Blank means no job writes (fails closed), so each job has to be named |
+| `JOBS_WRITE_ONLY`                                                                   | every job and the HubSpot webhook                                      | Comma list of the jobs allowed to write: `health-score`, `council`, `hubspot-sync` (also the webhook), `embed`, `teams-notify`, `follow-ups`, `style-guides`. Blank means no job writes (fails closed), so each job has to be named |
+| `STYLE_GUIDE_MODEL`                                                                 | `style-guides` job, `scripts/style-guide.ts`                           | Model that writes each pilot client's style guide for Suggested reply. Default `anthropic/claude-opus-5.5`. The reply itself uses `OPENROUTER_MODEL_A`                                     |
 | `COUNCIL_START_DATE`                                                                | council                                                                | IST date `YYYY-MM-DD`. The council only reads messages from 00:00 IST that day; older ones are never voted on. Pilot demo: 30 days back. Go-live: the launch day. Blank reads every unprocessed message; a bad value fails the run |
 | `HEALTH_SCORE_PILOT_ONLY`                                                           | health score                                                           | `true`: the daily run scores only clients with the council on (others have no tickets yet). Set `false` at go-live                                                                     |
 | `TEAMS_BOT_APP_ID`, `TEAMS_BOT_APP_PASSWORD`, `TEAMS_BOT_TENANT_ID`                 | Teams bot (`/api/teams/messages`, `teams-notify` job)                  | Azure Bot app id, client secret value and tenant id. Missing values switch the bot off. See `teams-app/README.md`                                                                    |
@@ -98,7 +99,7 @@ Routes: `/login`, `/auth/callback` (code exchange), `/auth/sign-out` (POST).
 | --------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------- |
 | `/home`                                       | everyone                               | KPIs, my open tickets by SLA, clients by bucket, today's activity                             |
 | `/clients`, `/clients/<id>`                   | everyone (own clients for accountants) | Client list and Client 360 (health, tickets, files grid, timeline, profile, meetings)         |
-| `/tickets`                                    | everyone                               | Ticket list with close, reopen and tag (accountants and admins)                               |
+| `/tickets`                                    | everyone                               | Ticket list with close, reopen and tag (accountants and admins). Pilot clients also get a Suggested reply in the panel (below) |
 | `/ask`                                        | everyone                               | AI chat over the user's own clients, every claim cited                                        |
 | `/admin`, `/admin/assignment`, `/admin/users` | admin (engineer sees Team only)        | Team workload, client assignment, users and roles                                             |
 | `/engineer`                                   | engineer                               | Data sources, failed processing with retry, council on / off, job commands, AI usage, view as |
@@ -116,6 +117,22 @@ shows exactly what a write run would change.
 | HubSpot sync   | `/api/jobs/hubspot-sync`                     | `*/30 * * * *`                | `clients.deal_stage` (label), `clients.amount_paid`, `clients.status` (Active / Inactive), new clients for active VA deals, settings `hubspot_last_sync`; HubSpot `va_*` deal properties only when `HUBSPOT_PUSH_ENABLED=true` |
 | Embeddings     | `/api/jobs/embed[?limit=1..100]`             | `0 * * * *`                   | `client_messages.embedding`                                                                                                                                                                                                    |
 | Follow-ups     | `/api/jobs/follow-ups`                       | `5,20,35,50 * * * *`          | `follow_ups` (promises, document requests, repeat asks), settings `follow_ups_scan`, Teams reminder and escalation cards (`teams_notifications`). Pilot clients only (council on), from `COUNCIL_START_DATE`. Needs `supabase/applied/2026-11-18-follow-ups.sql` applied |
+| Style guides   | `/api/jobs/style-guides[?clientIds=a,b&force=1]` | `0 22 * * *` (3:30 am IST) | settings `reply_style_guide:<client_id>` for the Suggested reply pilot clients (settings `reply_pilot_clients`): rebuilt when missing or 7+ days old, from the latest chat plus accountants' edits to suggested replies. A dry run makes no model calls. Needs `supabase/proposals/reply-suggestions.sql` run |
+
+### Suggested reply (AI reply drafts pilot)
+
+For a pilot client's open ticket where the client is waiting on us, the Tickets panel shows a reply written in that
+client's style (its style guide, the measured v3 drafting rules in `lib/reply/suggest-prompt.ts`, the 15 messages
+before the question and the latest accountant edits). Nothing is sent: the accountant edits it and copies it into
+WhatsApp. Every suggestion and what was done with it (copied, edited, discarded) is saved in `reply_suggestions`;
+edits go into the next drafts straight away and into the daily `style-guides` rebuild. Opening the ticket again
+shows the same suggestion until the client writes again (Regenerate writes a new one).
+
+Setup, once: run `supabase/proposals/reply-suggestions.sql` (the table and the pilot list), then either let the
+`style-guides` job build the guides (add `style-guides` to `JOBS_WRITE_ONLY`) or seed the guides the accountants
+reviewed: `npx tsx --conditions=react-server --env-file=.env.local scripts/style-guide.ts --group <id> --sql` writes
+`style-guides/<slug>.seed.sql` (git-ignored) to run in Supabase. Until then the box stays hidden.
+Measuring a change to the rules: `scripts/draft-test.ts` (80 held-back questions from the 4 pilot clients).
 
 The HubSpot webhook (`POST /api/webhooks/hubspot`) checks the v3 signature and runs the sync for only the deals
 in the payload; it follows the same write switch as `hubspot-sync`.

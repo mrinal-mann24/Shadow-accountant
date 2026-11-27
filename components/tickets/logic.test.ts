@@ -4,6 +4,7 @@ import {
   buildTimeline,
   countBySide,
   countOpenTicketTags,
+  findPlaceholders,
   firstReply,
   groupTicketsByClient,
   isWaitingSide,
@@ -15,6 +16,7 @@ import {
   ticketTitle,
   ticketUrgency,
   waitingSide,
+  wantsSuggestedReply,
 } from './logic'
 
 const NOW = new Date('2026-11-26T08:00:00Z')
@@ -132,6 +134,18 @@ describe('waiting side', () => {
     expect(ticketHref({ status: 'open', side: 'client' }, 't1')).toBe('/tickets?side=client&t=t1')
     expect(ticketHref({ status: 'open', side: 'us' }, 't1')).toBe('/tickets?t=t1')
     expect(ticketHref({ status: 'closed', side: 'client' }, 't1')).toBe('/tickets?status=closed&t=t1')
+  })
+  it('findPlaceholders lists [..] for the accountant but not the masking tokens', () => {
+    expect(findPlaceholders('PFA [attach: invoice PDF] for [amount], [number] [hidden] [attach: invoice PDF]')).toEqual([
+      '[attach: invoice PDF]',
+      '[amount]',
+    ])
+    expect(findPlaceholders('Noted sir')).toEqual([])
+  })
+  it('wantsSuggestedReply: open and the client wrote last', () => {
+    expect(wantsSuggestedReply(ticket('1', { lastMessageDirection: 'incoming' }))).toBe(true)
+    expect(wantsSuggestedReply(ticket('2', { lastMessageDirection: 'outgoing' }))).toBe(false)
+    expect(wantsSuggestedReply(ticket('3', { lastMessageDirection: 'incoming', status: 'closed' }))).toBe(false)
   })
   it('ticketClosedLabel', () => {
     expect(ticketClosedLabel({ closedBy: 'ai' })).toBe('Closed automatically')

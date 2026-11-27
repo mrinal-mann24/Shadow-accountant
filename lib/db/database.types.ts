@@ -1181,6 +1181,51 @@ export type Database = {
         }
         Relationships: []
       }
+      reply_suggestions: {
+        Row: {
+          acted_at: string | null
+          action: string | null
+          client_id: string
+          conversation_id: string
+          created_at: string
+          draft: string
+          final_text: string | null
+          guide_version: number | null
+          id: string
+          model: string
+          prompt_version: string
+          user_email: string
+        }
+        Insert: {
+          acted_at?: string | null
+          action?: string | null
+          client_id: string
+          conversation_id: string
+          created_at?: string
+          draft: string
+          final_text?: string | null
+          guide_version?: number | null
+          id?: string
+          model: string
+          prompt_version: string
+          user_email: string
+        }
+        Update: {
+          acted_at?: string | null
+          action?: string | null
+          client_id?: string
+          conversation_id?: string
+          created_at?: string
+          draft?: string
+          final_text?: string | null
+          guide_version?: number | null
+          id?: string
+          model?: string
+          prompt_version?: string
+          user_email?: string
+        }
+        Relationships: []
+      }
       score_weights: {
         Row: {
           description: string | null

@@ -4,6 +4,7 @@ import { FileText } from 'lucide-react'
 import Link from 'next/link'
 import { ticketAction } from '@/app/(app)/tickets/actions'
 import { draftReplyAction } from '@/app/(app)/tickets/draft-action'
+import { recordSuggestionAction, suggestReplyAction } from '@/app/(app)/tickets/suggest-action'
 import { DraftReplyButton } from '@/components/accountant/draft-reply'
 import { formatDateTime, formatMinutes } from '@/components/accountant/logic'
 import { TicketActions } from '@/components/accountant/ticket-actions'
@@ -11,6 +12,7 @@ import { SlaBadge, StatusBadge, TagBadge } from '@/components/accountant/ui'
 import type { ReplyContext } from '@/lib/data/reply-context'
 import { cn } from '@/lib/utils'
 import { buildTimeline, firstReply, ticketClosedLabel, ticketTitle, type TimelineEvent } from './logic'
+import { SuggestedReply } from './suggested-reply'
 import { SideBadge } from './ticket-row-parts'
 
 export const TICKET_PANEL_ID = 'ticket-panel'
@@ -65,11 +67,14 @@ export function ReplyTimeline({
   now,
   vaName,
   readOnlyNote,
+  suggested = null,
 }: {
   ctx: ReplyContext
   now: Date
   vaName: string | null
   readOnlyNote: string | null
+  /** Set when this ticket gets a Suggested reply (pilot client with a style guide, client waiting on us). */
+  suggested?: { readOnly: boolean } | null
 }) {
   const t = ctx.ticket
   const title = ticketTitle(t)
@@ -183,6 +188,17 @@ export function ReplyTimeline({
             See the full chat on the client page
           </Link>
         </p>
+      )}
+
+      {suggested && (
+        <SuggestedReply
+          key={`${t.id}-${t.lastMessageAt}`}
+          ticketId={t.id}
+          clientName={clientName}
+          suggest={suggestReplyAction}
+          record={recordSuggestionAction}
+          readOnly={suggested.readOnly}
+        />
       )}
 
       <div className="shrink-0 border-t border-line-soft pt-4">
