@@ -13,4 +13,6 @@ next-env.d.ts
 # Rollback exports and applied-change records hold message ids and client phone numbers: keep them out of git.
 supabase/**/*.csv
 supabase/**/*APPLIED-rollback.sql
+# Client style guides and their test pairs (scripts/style-guide.ts) are built from client chats.
+style-guides/
 teams-app/dist/
